@@ -79,7 +79,7 @@ export class VfxSystem {
   private tmpColor = new THREE.Color();
 
   constructor(kit: MaterialKit, assets: LoadedAssets) {
-    const sparkGeo = new THREE.BoxGeometry(0.08, 0.08, 0.38);
+    const sparkGeo = new THREE.BoxGeometry(0.022, 0.022, 0.16);
     const sparkMat = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
@@ -153,7 +153,7 @@ export class VfxSystem {
       });
     }
 
-    const debrisGeo = new THREE.BoxGeometry(0.18, 0.045, 0.28);
+    const debrisGeo = new THREE.BoxGeometry(0.10, 0.02, 0.14);
     const debrisMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
       roughness: 0.22,
@@ -295,8 +295,8 @@ export class VfxSystem {
       d.vry = (Math.random() - 0.5) * 20;
       d.vrz = (Math.random() - 0.5) * 20;
       d.groundY = groundY;
-      d.scale = 0.65 + Math.random() * 1.15;
-      d.maxLife = 1.55 + Math.random() * 0.75;
+      d.scale = 0.45 + Math.random() * 0.7;
+      d.maxLife = 1.4 + Math.random() * 0.65;
       d.life = d.maxLife;
       const roleRoll = i % 5;
       if (roleRoll < 2) d.color.setHex(0xbae6fd); // tempered windshield glass shard
@@ -323,7 +323,8 @@ export class VfxSystem {
 
       this.dummy.position.set(p.x, p.y, p.z);
       this.dummy.rotation.set(p.vy * 0.08, p.vx * 0.08, 0);
-      this.dummy.scale.set(p.scale * t, p.scale * t, p.scale * (0.8 + speedMps * 0.02));
+      const stretch = Math.min(1.6, 0.75 + speedMps * 0.012);
+      this.dummy.scale.set(p.scale * t, p.scale * t, p.scale * stretch);
       this.dummy.updateMatrix();
       this.sparkInst.setMatrixAt(activeSparks, this.dummy.matrix);
       this.sparkInst.setColorAt(activeSparks, p.color);

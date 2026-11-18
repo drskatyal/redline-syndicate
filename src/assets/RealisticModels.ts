@@ -945,8 +945,8 @@ export function createSuperbikeInstance(
       side: THREE.DoubleSide,
     });
     for (const rotZ of [0, Math.PI * 0.5]) {
-      const fg = new THREE.PlaneGeometry(0.22, 0.54);
-      fg.translate(0, -0.25, 0);
+      const fg = new THREE.PlaneGeometry(0.13, 0.30);
+      fg.translate(0, -0.14, 0);
       fg.rotateX(Math.PI * 0.5);
       const fm = new THREE.Mesh(fg, fMat);
       fm.position.copy(tpl.exhaustPos);
@@ -1085,19 +1085,24 @@ export function createArmoredRiderInstance(
         }
         const clonedMat = mat.clone();
         if (mn.includes("outfit_top")) {
-          clonedMat.color.setHex(jacketHex).multiplyScalar(0.96);
+          clonedMat.map = null;
+          clonedMat.color.setHex(jacketHex);
           clonedMat.normalMap = assets.textures.asphaltNor;
-          clonedMat.normalScale = new THREE.Vector2(0.16, 0.16);
-          clonedMat.roughness = 0.36;
-          clonedMat.metalness = 0.12;
+          clonedMat.normalScale = new THREE.Vector2(0.18, 0.18);
+          clonedMat.roughness = 0.42;
+          clonedMat.metalness = 0.08;
         } else if (mn.includes("outfit_bottom")) {
-          clonedMat.color.setHex(0x182130);
-          clonedMat.roughness = 0.74;
-          clonedMat.metalness = 0.04;
+          clonedMat.map = null;
+          clonedMat.color.setHex(0x213a5c);
+          clonedMat.normalMap = assets.textures.asphaltNor;
+          clonedMat.normalScale = new THREE.Vector2(0.22, 0.22);
+          clonedMat.roughness = 0.86;
+          clonedMat.metalness = 0.02;
         } else if (mn.includes("outfit_footwear")) {
-          clonedMat.color.setHex(0x12151b);
-          clonedMat.roughness = 0.45;
-          clonedMat.metalness = 0.1;
+          clonedMat.map = null;
+          clonedMat.color.setHex(0x0f1218);
+          clonedMat.roughness = 0.44;
+          clonedMat.metalness = 0.08;
         } else if (mn.includes("skin") || mn.includes("body") || mn.includes("hand")) {
           // Perforated carbon-black armored racing gloves over exposed hands/wrists
           clonedMat.color.setHex(0x14171f);
@@ -1119,21 +1124,6 @@ export function createArmoredRiderInstance(
     bones[norm] = o;
     restQuats[norm] = o.quaternion.clone();
   });
-
-  // Contoured MotoGP aero speed-hump pad on hero leather race suit
-  if (useHeroModel && bones["Spine2"]) {
-    const humpMat = new THREE.MeshPhysicalMaterial({
-      color: jacketHex,
-      roughness: 0.3,
-      metalness: 0.2,
-      clearcoat: 0.7,
-    });
-    const speedHump = new THREE.Mesh(new THREE.SphereGeometry(0.11, 14, 10), humpMat);
-    speedHump.scale.set(0.85, 1.35, 0.58);
-    speedHump.position.set(0, 0.06, -0.115);
-    speedHump.rotation.x = 0.18;
-    bones["Spine2"].add(speedHump);
-  }
 
   // Sculpted Aerodynamic Full-Face MotoGP Helmet + Iridium Mirror Visor + Merged Carbon Trim
   if (bones["Head"]) {
@@ -1356,29 +1346,29 @@ export function createArmoredRiderInstance(
     weaponGroupL.visible = false;
     charRoot.position.set(0, -0.78, 0);
 
-    const f1 = elapsed * 13.5 + seed * 3.1;
-    const f2 = elapsed * 16.2 + seed * 1.7;
-    const f3 = elapsed * 10.4 + seed * 2.3;
+    const f1 = elapsed * 5.2 + seed * 3.1;
+    const f2 = elapsed * 6.4 + seed * 1.7;
+    const f3 = elapsed * 4.4 + seed * 2.3;
 
-    applyDelta("Hips", 0.35 + Math.sin(f3) * 0.25, Math.cos(f1) * 0.22, Math.sin(f2) * 0.35);
-    applyDelta("Spine", Math.sin(f1) * 0.42, Math.cos(f2) * 0.28, Math.sin(f3) * 0.36);
-    applyDelta("Spine1", Math.cos(f2) * 0.38, Math.sin(f3) * 0.24, Math.cos(f1) * 0.32);
-    applyDelta("Spine2", Math.sin(f2) * 0.3, 0, Math.cos(f3) * 0.25);
-    applyDelta("Neck", Math.cos(f1) * 0.38, Math.sin(f2) * 0.42, Math.sin(f3) * 0.28);
-    applyDelta("Head", Math.sin(f2) * 0.35, Math.cos(f1) * 0.4, 0);
+    applyDelta("Hips", 0.32 + Math.sin(f3) * 0.16, Math.cos(f1) * 0.14, Math.sin(f2) * 0.2);
+    applyDelta("Spine", Math.sin(f1) * 0.24, Math.cos(f2) * 0.18, Math.sin(f3) * 0.22);
+    applyDelta("Spine1", Math.cos(f2) * 0.22, Math.sin(f3) * 0.16, Math.cos(f1) * 0.2);
+    applyDelta("Spine2", Math.sin(f2) * 0.18, 0, Math.cos(f3) * 0.16);
+    applyDelta("Neck", Math.cos(f1) * 0.24, Math.sin(f2) * 0.24, Math.sin(f3) * 0.18);
+    applyDelta("Head", Math.sin(f2) * 0.22, Math.cos(f1) * 0.24, 0);
 
-    applyDelta("LeftArm", 0.4 + Math.sin(f1) * 1.15, Math.cos(f2) * 0.65, 0.35 + Math.sin(f3) * 0.65);
-    applyDelta("LeftForeArm", -0.35 - Math.abs(Math.sin(f2)) * 1.1, 0, 0.2 + Math.cos(f1) * 0.45);
-    applyDelta("RightArm", 0.4 + Math.cos(f2) * 1.15, Math.sin(f1) * 0.65, -0.35 - Math.cos(f3) * 0.65);
-    applyDelta("RightForeArm", -0.35 - Math.abs(Math.cos(f1)) * 1.1, 0, -0.2 - Math.sin(f2) * 0.45);
+    applyDelta("LeftArm", 0.35 + Math.sin(f1) * 0.65, Math.cos(f2) * 0.38, 0.32 + Math.sin(f3) * 0.38);
+    applyDelta("LeftForeArm", -0.35 - Math.abs(Math.sin(f2)) * 0.62, 0, 0.18 + Math.cos(f1) * 0.28);
+    applyDelta("RightArm", 0.35 + Math.cos(f2) * 0.65, Math.sin(f1) * 0.38, -0.32 - Math.cos(f3) * 0.38);
+    applyDelta("RightForeArm", -0.35 - Math.abs(Math.cos(f1)) * 0.62, 0, -0.18 - Math.sin(f2) * 0.28);
 
-    applyDelta("LeftUpLeg", 0.5 + Math.sin(f2) * 0.95, 0.15 + Math.cos(f1) * 0.3, 0.25 + Math.abs(Math.sin(f3)) * 0.45);
-    applyDelta("LeftLeg", -0.95 - Math.cos(f1) * 0.75, 0, 0);
-    applyDelta("LeftFoot", 0.25 * Math.sin(f2), 0, 0);
+    applyDelta("LeftUpLeg", 0.45 + Math.sin(f2) * 0.56, 0.12 + Math.cos(f1) * 0.2, 0.22 + Math.abs(Math.sin(f3)) * 0.28);
+    applyDelta("LeftLeg", -0.85 - Math.cos(f1) * 0.48, 0, 0);
+    applyDelta("LeftFoot", 0.18 * Math.sin(f2), 0, 0);
 
-    applyDelta("RightUpLeg", 0.5 + Math.cos(f1) * 0.95, -0.15 + Math.sin(f2) * 0.3, -0.25 - Math.abs(Math.cos(f3)) * 0.45);
-    applyDelta("RightLeg", -0.95 - Math.sin(f2) * 0.75, 0, 0);
-    applyDelta("RightFoot", 0.25 * Math.cos(f1), 0, 0);
+    applyDelta("RightUpLeg", 0.45 + Math.cos(f1) * 0.56, -0.12 + Math.sin(f2) * 0.2, -0.22 - Math.abs(Math.cos(f3)) * 0.28);
+    applyDelta("RightLeg", -0.85 - Math.sin(f2) * 0.48, 0, 0);
+    applyDelta("RightFoot", 0.18 * Math.cos(f1), 0, 0);
   };
 
   applyMotoPose(0, 0, 0, 0, "melee", 0);
@@ -1808,7 +1798,7 @@ export function createPursuitHelicopterInstance(assets: LoadedAssets): Helicopte
   const beamMat = new THREE.MeshBasicMaterial({
     color: 0xe0f2fe,
     transparent: true,
-    opacity: 0.14,
+    opacity: 0.055,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide,
@@ -1825,7 +1815,7 @@ export function createPursuitHelicopterInstance(assets: LoadedAssets): Helicopte
     new THREE.MeshBasicMaterial({
       color: 0xe0f2fe,
       transparent: true,
-      opacity: 0.22,
+      opacity: 0.10,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     })

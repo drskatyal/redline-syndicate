@@ -61,7 +61,11 @@ interface BikerSim {
   rider: ArmoredRiderVisual;
   targetLaneX: number;
   laneTimer: number;
+  lastHitByPlayerTimer: number;
 }
+
+const LANE_CENTERS = [-4.8, -1.95, 1.95, 4.8] as const;
+const LANE_SPEEDS = [-27, -22, 28, 22] as const;
 
 interface TrafficSim {
   id: number;
@@ -71,6 +75,7 @@ interface TrafficSim {
   s: number;
   distRolled: number;
   laneX: number; // - = Left, + = Right
+  homeLaneX: number;
   latVel: number;
   yawWobble: number;
   pitchAngle: number;
@@ -78,7 +83,9 @@ interface TrafficSim {
   brakeTimer: number;
   hazardTimer: number;
   slammedByPlayer: boolean;
+  slammedByPlayerTimer: number;
   speed: number;
+  desiredSpeed: number;
   oncoming: boolean;
   roadblock: boolean;
   nearMissed: boolean;
@@ -221,6 +228,9 @@ export class GameEngine {
   private barWobbleTimer = 0;
   private wreckFocusTimer = 0;
   private crashSeed = 1;
+  private lastFocusActive = false;
+  private lastOverlapCount = 0;
+  private crashBlockedCar: TrafficSim | null = null;
 
   private tmpProj = new THREE.Vector3();
   private onUiUpdate: (snap: UiSnapshot) => void;
@@ -489,7 +499,7 @@ export class GameEngine {
     const accent = this.save.customAccentHex ?? bikeSpec.accentHex;
 
     const pBike = createSuperbikeInstance(this.assets, this.kit, bikeSpec, primary, accent, true);
-    const pRider = createArmoredRiderInstance(this.assets, 0x161b26, accent, "knuckle", true);
+    const pRider = createArmoredRiderInstance(this.assets, 0x2b3140, accent, "knuckle", true);
     pBike.chassisPivot.add(pRider.root);
     this.raceGroup.add(pBike.root);
 
@@ -525,6 +535,7 @@ export class GameEngine {
       rider: pRider,
       targetLaneX: 2.1,
       laneTimer: 0,
+      lastHitByPlayerTimer: 0,
     };
     this.racers.push(this.player);
 
@@ -577,26 +588,30 @@ export class GameEngine {
         rider: rRider,
         targetLaneX: lane,
         laneTimer: 1 + idx * 0.25,
+        lastHitByPlayerTimer: 0,
       });
     });
 
-    // Diverse Real Car Traffic Pool: Tesla Model 3 Sedan, BMW M3 E30 Coupe, Ferrari Exotic, Commercial Truck
-    const kinds: TrafficKind[] = ["sedan", "muscle", "exotic", "truck", "sedan", "muscle"];
-    const poolCount = Math.min(6, this.activeStage.trafficDensity);
+    // Diverse Real Car Traffic Pool distributed across 4 separated highway lanes
+    const kinds: TrafficKind[] = ["sedan", "muscle", "exotic", "truck", "sedan", "muscle", "exotic"];
+    const poolCount = Math.min(7, Math.max(6, this.activeStage.trafficDensity));
     for (let i = 0; i < poolCount; i++) {
       const kind = kinds[i % kinds.length];
       const vis = createTrafficVehicleInstance(this.assets, this.kit, kind, i);
       this.raceGroup.add(vis.root);
-      const oncoming = i % 2 === 1;
-      const laneX = oncoming ? (i % 4 === 1 ? -4.8 : -1.9) : i % 4 === 0 ? 1.9 : 4.8;
+      const laneSlot = i % 4;
+      const oncoming = laneSlot < 2;
+      const laneX = LANE_CENTERS[laneSlot];
+      const desiredSpeed = LANE_SPEEDS[laneSlot] + (oncoming ? -(i % 3) : (i % 3) * 1.5);
       this.traffic.push({
         id: i,
         kind,
         halfWidth: kind === "truck" ? 1.15 : kind === "muscle" ? 0.96 : 1.02,
         halfLength: kind === "truck" ? 3.1 : kind === "muscle" ? 2.18 : 2.34,
-        s: 110 + i * 44,
+        s: 115 + i * 52,
         distRolled: 0,
         laneX,
+        homeLaneX: laneX,
         latVel: 0,
         yawWobble: 0,
         pitchAngle: 0,
@@ -604,7 +619,9 @@ export class GameEngine {
         brakeTimer: 0,
         hazardTimer: 0,
         slammedByPlayer: false,
-        speed: oncoming ? -(22 + (i % 3) * 4) : 24 + (i % 4) * 3,
+        slammedByPlayerTimer: 0,
+        speed: desiredSpeed,
+        desiredSpeed,
         oncoming,
         roadblock: false,
         nearMissed: false,
@@ -634,6 +651,9 @@ export class GameEngine {
     this.hitstopTimer = 0;
     this.takedownSlowMo = 0;
     this.damageFlash = 0;
+    this.lastFocusActive = false;
+    this.lastOverlapCount = 0;
+    this.crashBlockedCar = null;
     this.nextRoadblockS = 950;
     this.nextInterceptorCheckS = 600;
     this.results = null;
@@ -716,14 +736,21 @@ export class GameEngine {
 
     const vis = createTrafficVehicleInstance(this.assets, this.kit, "police", 0);
     this.raceGroup.add(vis.root);
+    const outLane = this.player.laneX > 3.0 ? 1.95 : 4.8;
+    let spawnS = Math.max(20, this.player.s + aheadS);
+    while (this.traffic.some((o) => o.disabledTimer <= 0 && Math.abs(o.s - spawnS) < 16 && Math.abs(o.laneX - outLane) < 2.6)) {
+      spawnS += 18;
+    }
+    const initSpeed = Math.max(46, this.player.speed * 0.96);
     this.traffic.push({
       id: 9000 + Math.round(aheadS),
       kind: "police",
       halfWidth: 1.04,
       halfLength: 2.32,
-      s: Math.max(20, this.player.s + aheadS),
+      s: spawnS,
       distRolled: 0,
-      laneX: this.player.laneX > 0 ? -3.4 : 3.4,
+      laneX: outLane,
+      homeLaneX: outLane,
       latVel: 0,
       yawWobble: 0,
       pitchAngle: 0,
@@ -731,7 +758,9 @@ export class GameEngine {
       brakeTimer: 0,
       hazardTimer: 0,
       slammedByPlayer: false,
-      speed: Math.max(46, this.player.speed * 0.96),
+      slammedByPlayerTimer: 0,
+      speed: initSpeed,
+      desiredSpeed: initSpeed,
       oncoming: false,
       roadblock: false,
       nearMissed: false,
@@ -784,6 +813,7 @@ export class GameEngine {
       rider,
       targetLaneX: lane,
       laneTimer: 0.7,
+      lastHitByPlayerTimer: 0,
     });
   }
 
@@ -801,6 +831,7 @@ export class GameEngine {
         s: sPos,
         distRolled: 0,
         laneX: -4.2,
+        homeLaneX: -4.2,
         latVel: 0,
         yawWobble: 0,
         pitchAngle: 0,
@@ -808,7 +839,9 @@ export class GameEngine {
         brakeTimer: 0,
         hazardTimer: 0,
         slammedByPlayer: false,
+        slammedByPlayerTimer: 0,
         speed: 0,
+        desiredSpeed: 0,
         oncoming: false,
         roadblock: true,
         nearMissed: false,
@@ -824,6 +857,7 @@ export class GameEngine {
         s: sPos,
         distRolled: 0,
         laneX: 5.1,
+        homeLaneX: 5.1,
         latVel: 0,
         yawWobble: 0,
         pitchAngle: 0,
@@ -831,7 +865,9 @@ export class GameEngine {
         brakeTimer: 0,
         hazardTimer: 0,
         slammedByPlayer: false,
+        slammedByPlayerTimer: 0,
         speed: 0,
+        desiredSpeed: 0,
         oncoming: false,
         roadblock: true,
         nearMissed: false,
@@ -944,6 +980,7 @@ export class GameEngine {
       }
 
       const focusActive = intent.bulletTime && this.focus > 4 && this.countdownTimer <= 0 && !this.player.crashed;
+      this.lastFocusActive = focusActive;
       if (focusActive) {
         this.focus = Math.max(0, this.focus - rawDt * 24);
         if (this.focus <= 0) this.input.clearFocus();
@@ -952,13 +989,9 @@ export class GameEngine {
         this.focus = Math.min(this.maxFocus, this.focus + rawDt * 7 * capMul);
       }
 
-      if (this.hitstopTimer > 0) {
-        this.hitstopTimer = Math.max(0, this.hitstopTimer - rawDt);
-        this.pipeline.render();
-        return;
-      }
+      if (this.hitstopTimer > 0) this.hitstopTimer = 0;
 
-      const simScale = focusActive ? 0.42 : this.takedownSlowMo > 0 ? 0.38 : 1.0;
+      const simScale = focusActive ? 0.42 : this.takedownSlowMo > 0 ? 0.48 : 1.0;
       const simDt = rawDt * simScale;
       this.stepRace(simDt, rawDt, wallDt, intent, focusActive);
 
@@ -968,7 +1001,7 @@ export class GameEngine {
     }
 
     const speedMph = this.player ? this.player.speed * MPS_TO_MPH : 0;
-    const isFocus = this.screen === "racing" && this.input.sample().bulletTime && this.focus > 4;
+    const isFocus = this.screen === "racing" && this.lastFocusActive;
     this.pipeline.updatePostFX(Math.min(1, speedMph / 245), isFocus ? 1.0 : 0.0, this.damageFlash);
     this.pipeline.render();
 
@@ -987,6 +1020,8 @@ export class GameEngine {
       armor: Math.round(this.player ? this.player.armor : 100),
       cash: this.save.cash,
       ragdollActive: this.ragdollActive,
+      overlappingTrafficPairs: this.lastOverlapCount,
+      bannerText: this.bannerTimer > 0 ? this.bannerText : "",
       activeTrafficKinds: Array.from(new Set(this.traffic.filter((t) => t.disabledTimer <= 0).map((t) => t.kind))),
       audioDiagnostics: this.audio.getDiagnostics(),
     });
@@ -1116,6 +1151,7 @@ export class GameEngine {
         this.bikeSpinYaw = 0;
         this.bikeSpinRate = 0;
         this.wreckFocusTimer = 0;
+        this.crashBlockedCar = null;
         if (this.ragdollActive) {
           this.ragdollActive = false;
           p.rider.root.position.set(0, 0, 0);
@@ -1243,6 +1279,7 @@ export class GameEngine {
 
     for (const r of this.racers) {
       if (r.isPlayer) continue;
+      if (r.lastHitByPlayerTimer > 0) r.lastHitByPlayerTimer = Math.max(0, r.lastHitByPlayerTimer - rawDt);
       this.stepAiRacer(r, dt);
       this.stepVerticalJump(r, dt);
     }
@@ -1269,6 +1306,8 @@ export class GameEngine {
           b.laneX -= push * 0.25;
           a.vx += push * 2.8;
           b.vx -= push * 2.8;
+          if (a.isPlayer) b.lastHitByPlayerTimer = 4.0;
+          if (b.isPlayer) a.lastHitByPlayerTimer = 4.0;
           if (a.isPlayer || b.isPlayer) {
             const wRub = this.track.toWorld(p.s, p.laneX);
             this.vfx.spawnBurst(wRub.x, wRub.y + 0.7, wRub.z, 0xffaa00, 6, 6, 0.8);
@@ -1277,12 +1316,17 @@ export class GameEngine {
       }
     }
 
-    // Traffic & Realistic Physical Car Collisions + Chain-Reaction Traffic Slam Takedowns
+    // 1. Traffic Motion + IDM Headway Braking + Safe De-conflicted Respawns
+    const prevCarSMap = new Map<number, number>();
     for (const t of this.traffic) {
       if (t.disabledTimer > 0) t.disabledTimer = Math.max(0, t.disabledTimer - dt);
       if (t.brakeTimer > 0) t.brakeTimer = Math.max(0, t.brakeTimer - dt);
       if (t.hazardTimer > 0) t.hazardTimer = Math.max(0, t.hazardTimer - dt);
-      const prevCarS = t.s;
+      if (t.slammedByPlayerTimer > 0) {
+        t.slammedByPlayerTimer = Math.max(0, t.slammedByPlayerTimer - dt);
+        if (t.slammedByPlayerTimer <= 0) t.slammedByPlayer = false;
+      }
+      prevCarSMap.set(t.id, t.s);
 
       t.laneX = Math.max(-PLAYABLE_HALF_WIDTH, Math.min(PLAYABLE_HALF_WIDTH, t.laneX + t.latVel * dt));
       t.latVel *= Math.exp(-4.2 * dt);
@@ -1296,17 +1340,35 @@ export class GameEngine {
 
       if (t.kind === "police" && !t.roadblock) {
         if (t.disabledTimer <= 0) {
-          const targetSpd = Math.min(72, Math.max(40, p.speed + (p.s - t.s) * 0.65));
+          let targetSpd = Math.min(72, Math.max(40, p.speed + (p.s - t.s) * 0.65));
+          for (const other of this.traffic) {
+            if (other === t || other.disabledTimer > 0 || other.oncoming || other.roadblock) continue;
+            if (Math.abs(other.laneX - t.laneX) < t.halfWidth + other.halfWidth + 0.7) {
+              const gap = other.s - other.halfLength - (t.s + t.halfLength);
+              if (gap > -1 && gap < 22) {
+                targetSpd = Math.min(targetSpd, other.speed);
+              }
+            }
+          }
           t.speed += (targetSpd - t.speed) * (1 - Math.exp(-3.2 * dt));
           t.s += t.speed * dt;
           t.distRolled += t.speed * dt;
-          const desiredX = Math.abs(t.s - p.s) < 16 ? p.laneX + (p.laneX > 0 ? -2.3 : 2.3) : Math.sin(this.totalElapsed + t.id) * 3.5;
+          let desiredX = Math.abs(t.s - p.s) < 18 ? p.laneX + (p.laneX > 1.0 ? -2.3 : 2.3) : t.homeLaneX;
+          desiredX = Math.max(Math.abs(t.s - p.s) < 18 ? -4.8 : 1.6, Math.min(5.2, desiredX));
+          for (const other of this.traffic) {
+            if (other === t || other.disabledTimer > 0) continue;
+            if (Math.abs(other.s - t.s) < 16 && Math.abs(other.laneX - desiredX) < t.halfWidth + other.halfWidth + 0.9) {
+              desiredX = other.laneX > 0 ? Math.max(-4.8, other.laneX - 3.2) : Math.min(5.2, other.laneX + 3.2);
+            }
+          }
           t.laneX += Math.max(-1, Math.min(1, desiredX - t.laneX)) * 5.2 * dt;
 
           // Side Kick / Melee PIT slam into cruiser pushes it sideways off the highway!
           if (!p.crashed && p.attackTimer > 0 && Math.abs(p.s - t.s) < 3.2 && Math.abs(p.laneX - t.laneX) < 3.0) {
             const pitSide = Math.sign(t.laneX - p.laneX || p.attackSide || 1);
             t.hp -= 55;
+            t.slammedByPlayer = true;
+            t.slammedByPlayerTimer = 5.0;
             t.latVel = pitSide * 7.8;
             t.yawWobble = pitSide * 0.34;
             t.rollAngle = -pitSide * 0.16;
@@ -1328,35 +1390,49 @@ export class GameEngine {
           }
         }
       } else if (!t.roadblock) {
+        // Ahead-car IDM headway braking so same-direction and oncoming cars never overlap linearly
+        let targetSpeed = t.desiredSpeed;
+        if (!t.oncoming) {
+          for (const other of this.traffic) {
+            if (other === t || other.disabledTimer > 0 || other.oncoming || other.roadblock) continue;
+            if (Math.abs(other.laneX - t.laneX) < t.halfWidth + other.halfWidth + 0.65) {
+              const gap = other.s - other.halfLength - (t.s + t.halfLength);
+              if (gap > -2 && gap < 28) {
+                const cap = gap < 10 ? Math.max(0, other.speed - (10 - gap) * 1.8) : other.speed * 0.94;
+                targetSpeed = Math.min(targetSpeed, cap);
+              }
+            }
+          }
+        } else {
+          for (const other of this.traffic) {
+            if (other === t || other.disabledTimer > 0 || !other.oncoming || other.roadblock) continue;
+            if (Math.abs(other.laneX - t.laneX) < t.halfWidth + other.halfWidth + 0.65) {
+              const gap = t.s - t.halfLength - (other.s + other.halfLength);
+              if (gap > -2 && gap < 28) {
+                const cap = gap < 10 ? Math.min(0, other.speed + (10 - gap) * 1.8) : other.speed * 0.94;
+                targetSpeed = Math.max(targetSpeed, cap);
+              }
+            }
+          }
+        }
+        if (t.brakeTimer <= 0) {
+          t.speed += (targetSpeed - t.speed) * (1 - Math.exp(-3.8 * dt));
+        }
+        if (t.slammedByPlayerTimer <= 0) {
+          t.laneX += (t.homeLaneX - t.laneX) * Math.min(1, 1.4 * dt);
+        }
+
         t.s += t.speed * dt;
         t.distRolled += t.speed * dt;
-        if (t.s < p.s - 35) {
-          t.s = p.s + 260 + Math.random() * 140;
-          t.nearMissed = false;
-          t.latVel = 0;
-          t.yawWobble = 0;
-          t.pitchAngle = 0;
-          t.rollAngle = 0;
-          t.brakeTimer = 0;
-          t.hazardTimer = 0;
-          t.slammedByPlayer = false;
-          t.speed = t.oncoming ? -(22 + (t.id % 3) * 4) : 24 + (t.id % 4) * 3;
-        } else if (t.s > p.s + 420) {
-          t.s = p.s + 240 + Math.random() * 140;
-          t.nearMissed = false;
-          t.latVel = 0;
-          t.yawWobble = 0;
-          t.pitchAngle = 0;
-          t.rollAngle = 0;
-          t.brakeTimer = 0;
-          t.hazardTimer = 0;
-          t.slammedByPlayer = false;
+        if (t.s < p.s - 35 || t.s > p.s + 430) {
+          this.findSafeTrafficSpawn(t, p.s);
         }
 
         // Player Kick/Strike alongside any civilian car shoves it into adjacent lane (enabling chain-reaction Traffic Slams!)
         if (!p.crashed && p.attackTimer > 0 && !t.slammedByPlayer && Math.abs(p.s - t.s) < t.halfLength + 1.1 && Math.abs(p.laneX - t.laneX) < t.halfWidth + 1.85) {
           const slamSide = Math.sign(t.laneX - p.laneX || p.attackSide || 1);
           t.slammedByPlayer = true;
+          t.slammedByPlayerTimer = 5.0;
           t.latVel = slamSide * 7.6;
           t.yawWobble = slamSide * 0.24;
           t.rollAngle = -slamSide * 0.18;
@@ -1369,6 +1445,28 @@ export class GameEngine {
           this.audio.playCarHorn(0.95);
         }
       }
+    }
+
+    // 2. Hard pairwise car-vs-car separation solver (guarantees zero cars passing through each other)
+    this.resolveCarVsCarCollisions();
+
+    // Prevent crashed player motorcycle from sliding cleanly through the struck vehicle trunk
+    if (p.crashed && this.crashBlockedCar && this.crashBlockedCar.disabledTimer <= 0) {
+      const bc = this.crashBlockedCar;
+      if (Math.abs(p.laneX - bc.laneX) < bc.halfWidth + 0.48 && Math.abs(p.s - bc.s) < bc.halfLength + 0.9) {
+        if (!bc.oncoming) {
+          p.s = Math.min(p.s, bc.s - bc.halfLength - 0.95);
+          p.speed = Math.min(p.speed, Math.max(0, bc.speed * 0.88));
+        } else {
+          const pushSide = p.laneX >= bc.laneX ? 1 : -1;
+          p.laneX = bc.laneX + pushSide * (bc.halfWidth + 0.68);
+        }
+      }
+    }
+
+    // 3. Vehicle interaction & player-attributed Traffic Slam resolution
+    for (const t of this.traffic) {
+      const prevCarS = prevCarSMap.get(t.id) ?? t.s;
 
       // Chain-reaction Rival / Cop slammed into traffic car!
       if (t.disabledTimer <= 0) {
@@ -1380,11 +1478,22 @@ export class GameEngine {
             t.rollAngle = cSide * 0.16;
             t.brakeTimer = 2.0;
             t.hazardTimer = 3.6;
-            const wSlam = this.track.toWorld(t.s, (r.laneX + t.laneX) * 0.5);
-            this.vfx.spawnDebrisBurst(wSlam.x, wSlam.y + 0.7, wSlam.z, cSide * 5, t.speed * 0.4, t.visual.bodyMat.color.getHex(), 18, wSlam.y);
-            this.knockoutRacer(r, cSide);
-            this.raceCashEarned += 200;
-            this.showBanner(`TRAFFIC SLAM TAKEDOWN! +$650`, 2.2);
+            const playerCaused =
+              (r.lastHitByPlayerTimer > 0 || t.slammedByPlayerTimer > 0) && Math.abs(r.s - p.s) < 48;
+            if (playerCaused) {
+              const wSlam = this.track.toWorld(t.s, (r.laneX + t.laneX) * 0.5);
+              this.vfx.spawnDebrisBurst(wSlam.x, wSlam.y + 0.7, wSlam.z, cSide * 5, t.speed * 0.4, t.visual.bodyMat.color.getHex(), 14, wSlam.y);
+              this.knockoutRacer(r, cSide);
+              this.raceCashEarned += 200;
+              this.showBanner("TRAFFIC SLAM TAKEDOWN! +$650", 2.0);
+            } else {
+              // Silent background rider crash with zero false popup or slow-mo disruption
+              r.crashed = true;
+              r.crashTimer = 2.8;
+              r.crashDir = cSide || 1;
+              r.speed *= 0.28;
+              r.stamina = r.maxStamina;
+            }
             break;
           }
         }
@@ -1409,33 +1518,46 @@ export class GameEngine {
 
       if (!p.crashed && this.postCrashGhostTimer <= 0 && t.disabledTimer <= 0 && p.yOffset < 1.35 && Math.abs(p.s - t.s) < t.halfLength + 0.85) {
         if (Math.abs(p.laneX - t.laneX) < t.halfWidth + 0.42) {
-          const hitSide = Math.sign(p.laneX - t.laneX || (p.laneX > 0 ? -1 : 1));
+          const dx = p.laneX - t.laneX;
+          const hitSide = Math.sign(dx || (p.laneX > 0 ? -1 : 1));
           const relSpeed = Math.abs(p.speed - t.speed);
-          const wasAlongside = Math.abs(prevPlayerS - prevCarS) < t.halfLength + 0.35;
+          const alongSideEdge = Math.abs(prevPlayerS - prevCarS) < t.halfLength + 0.25 && Math.abs(dx) > t.halfWidth * 0.65;
+          const deadBehind = !t.oncoming && prevPlayerS < prevCarS - t.halfLength * 0.55 && Math.abs(dx) < t.halfWidth * 0.55;
           const wHit = this.track.toWorld(p.s, (p.laneX + t.laneX) * 0.5);
 
-          if (wasAlongside || relSpeed < 12) {
-            // Glancing door-scrape / side-swipe: bounce cleanly apart, rock car suspension, tank-slapper handlebar wobble & debris
-            p.laneX = t.laneX + hitSide * (t.halfWidth + 0.52);
-            p.vx = hitSide * 7.4;
-            this.barWobbleTimer = 0.55;
-            t.latVel = -hitSide * 4.6;
-            t.yawWobble = -hitSide * 0.18;
-            t.rollAngle = hitSide * 0.16;
-            t.hazardTimer = 2.6;
-            p.speed *= 0.86;
-            p.armor = Math.max(0, p.armor - 6);
-            this.damageFlash = Math.max(this.damageFlash, 0.42);
-            this.vfx.spawnBurst(wHit.x, wHit.y + 0.65, wHit.z, 0xffaa00, 16, 10, 0.9);
-            this.vfx.spawnDebrisBurst(wHit.x, wHit.y + 0.65, wHit.z, hitSide * 4, p.speed * 0.35, t.visual.bodyMat.color.getHex(), 8, wHit.y);
-            this.vfx.spawnSmoke(wHit.x, wHit.y + 0.35, wHit.z, 3, 0.95);
-            this.cameraRig.addTrauma(0.32);
+          if (alongSideEdge || relSpeed < 10) {
+            if (deadBehind) {
+              p.s = Math.min(p.s, t.s - t.halfLength - 0.95);
+              p.speed = Math.min(p.speed, Math.max(8, t.speed * 0.92));
+              p.vx = hitSide * 5.2;
+            } else {
+              // Glancing door-scrape / side-swipe: bounce cleanly apart, rock car suspension, tank-slapper handlebar wobble
+              p.laneX = t.laneX + hitSide * (t.halfWidth + 0.54);
+              p.vx = hitSide * 7.2;
+              this.barWobbleTimer = 0.52;
+              this.showBanner("SIDE-SWIPE! HOLD THE BARS!", 0.95);
+            }
+            t.slammedByPlayer = true;
+            t.slammedByPlayerTimer = 4.0;
+            t.latVel = -hitSide * 4.4;
+            t.yawWobble = -hitSide * 0.16;
+            t.rollAngle = hitSide * 0.14;
+            t.hazardTimer = 2.4;
+            p.speed *= 0.88;
+            p.armor = Math.max(0, p.armor - 5);
+            this.damageFlash = Math.max(this.damageFlash, 0.38);
+            this.vfx.spawnBurst(wHit.x, wHit.y + 0.65, wHit.z, 0xffaa00, 14, 9, 0.85);
+            this.vfx.spawnDebrisBurst(wHit.x, wHit.y + 0.65, wHit.z, hitSide * 4, p.speed * 0.35, t.visual.bodyMat.color.getHex(), 6, wHit.y);
+            this.vfx.spawnSmoke(wHit.x, wHit.y + 0.35, wHit.z, 2, 0.9);
+            this.cameraRig.addTrauma(0.28);
             this.audio.playStrike(true);
             this.audio.playCarHorn(1.06);
-            this.audio.setSkidIntensity(0.5);
-            this.showBanner("SIDE-SWIPE! HOLD THE BARS!", 1.0);
+            this.audio.setSkidIntensity(0.45);
           } else {
-            // Catastrophic high-speed car crash: launch ragdoll rider over the car, lock car brakes + 3D debris shatter!
+            // High-speed car impact: clamp bike outside rear trunk, vault ragdoll cleanly forward over hood
+            if (!t.oncoming) {
+              p.s = Math.min(p.s, t.s - t.halfLength - 0.92);
+            }
             if (!t.roadblock) {
               t.speed = Math.max(-22, t.speed + (p.speed - t.speed) * 0.26);
             }
@@ -1568,17 +1690,38 @@ export class GameEngine {
 
     r.laneTimer -= dt;
     if (r.laneTimer <= 0) {
-      r.laneTimer = 0.6 + Math.random() * 0.8;
+      r.laneTimer = 0.55 + Math.random() * 0.7;
       if (r.isCop && Math.abs(r.s - this.player.s) < 18) {
         r.targetLaneX = this.player.laneX + (this.player.laneX > 0 ? -1.4 : 1.4);
       } else {
-        r.targetLaneX = Math.max(-5.5, Math.min(5.5, r.laneX + (Math.random() - 0.5) * 4.5));
+        // Multi-lane 95m lookahead scorer so AI riders actively avoid hitting cars head-on or rear-ending
+        const candLanes = [-5.0, -2.5, 0, 2.5, 5.0];
+        let bestLane = r.targetLaneX;
+        let bestScore = -1e9;
+        for (const cl of candLanes) {
+          let score = -Math.abs(cl - r.laneX) * 0.6 + (Math.random() - 0.5) * 0.4;
+          for (const t of this.traffic) {
+            if (t.disabledTimer > 0) continue;
+            const relS = t.s - r.s;
+            const lookAhead = t.oncoming ? 115 : 85;
+            if (relS > -6 && relS < lookAhead && Math.abs(t.laneX - cl) < t.halfWidth + 1.35) {
+              score -= (lookAhead - Math.max(0, relS)) * (t.oncoming ? 3.0 : 2.2);
+            }
+          }
+          if (score > bestScore) {
+            bestScore = score;
+            bestLane = cl;
+          }
+        }
+        r.targetLaneX = bestLane;
       }
     }
 
     for (const t of this.traffic) {
-      if (t.s > r.s && t.s - r.s < 32 && Math.abs(t.laneX - r.laneX) < t.halfWidth + 1.0) {
-        r.targetLaneX = t.laneX > 0 ? Math.max(-5.5, t.laneX - 3.2) : Math.min(5.5, t.laneX + 3.2);
+      if (t.disabledTimer > 0) continue;
+      const lookAhead = t.oncoming ? 72 : 48;
+      if (t.s > r.s - 2 && t.s - r.s < lookAhead && Math.abs(t.laneX - r.laneX) < t.halfWidth + 1.15) {
+        r.targetLaneX = t.laneX > 0 ? Math.max(-5.4, t.laneX - 3.3) : Math.min(5.4, t.laneX + 3.3);
       }
     }
 
@@ -1660,8 +1803,9 @@ export class GameEngine {
             this.triggerPlayerCrash(attacker.attackSide, 18);
           }
         } else {
+          if (attacker.isPlayer) target.lastHitByPlayerTimer = 5.0;
           this.cameraRig.addTrauma(0.3);
-          this.hitstopTimer = 0.03;
+          this.hitstopTimer = 0;
           if (target.stamina <= 0) {
             this.knockoutRacer(target, attacker.attackSide);
           } else {
@@ -1692,6 +1836,7 @@ export class GameEngine {
     this.bikeSpinYaw = 0;
     this.bikeSpinRate = dir * 7.8;
     this.wreckFocusTimer = 1.65;
+    this.crashBlockedCar = hitCar ?? null;
     this.cameraRig.addTrauma(0.85);
     this.audio.playCrash(true);
 
@@ -1721,7 +1866,7 @@ export class GameEngine {
         8.4 + Math.min(6.4, rel * 0.16),
         fwdZ * launchSpeed + wp.rightZ * dir * 3.8
       );
-      this.ragdollSpin.set(7.8, 4.9 * dir, 6.2 * dir);
+      this.ragdollSpin.set(5.2, 3.2 * dir, 4.1 * dir);
     }
 
     if (hitCar) {
@@ -1908,8 +2053,131 @@ export class GameEngine {
       const hoverY = wh.y + 18 + Math.sin(this.totalElapsed * 1.9) * 1.0;
       this.helicopter.root.position.set(wh.x, hoverY, wh.z);
       this.helicopter.root.rotation.set(0.16, wh.yaw + Math.PI, Math.sin(this.totalElapsed * 1.1) * 0.14);
+      this.helicopter.searchBeam.visible = this.activeStage.isNight;
+      this.helicopter.spotPool.visible = this.activeStage.isNight;
       this.helicopter.update(dt, this.totalElapsed, wh.y);
     }
+  }
+
+  private findSafeTrafficSpawn(t: TrafficSim, playerS: number): void {
+    const startIdx = Math.abs(t.id + Math.round(playerS * 0.03)) % LANE_CENTERS.length;
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const laneSlot = (startIdx + attempt) % LANE_CENTERS.length;
+      const candLane = LANE_CENTERS[laneSlot];
+      const candS = playerS + 235 + Math.floor(attempt / 4) * 38 + Math.random() * 45;
+      const blocked = this.traffic.some(
+        (o) =>
+          o !== t &&
+          o.disabledTimer <= 0 &&
+          Math.abs(o.laneX - candLane) < t.halfWidth + o.halfWidth + 0.65 &&
+          Math.abs(o.s - candS) < t.halfLength + o.halfLength + 20
+      );
+      if (!blocked) {
+        t.homeLaneX = candLane;
+        t.laneX = candLane;
+        t.oncoming = laneSlot < 2;
+        t.desiredSpeed = LANE_SPEEDS[laneSlot] + (t.oncoming ? -(t.id % 3) : (t.id % 3) * 1.5);
+        t.speed = t.desiredSpeed;
+        t.s = candS;
+        t.nearMissed = false;
+        t.latVel = 0;
+        t.yawWobble = 0;
+        t.pitchAngle = 0;
+        t.rollAngle = 0;
+        t.brakeTimer = 0;
+        t.hazardTimer = 0;
+        t.slammedByPlayer = false;
+        t.slammedByPlayerTimer = 0;
+        return;
+      }
+    }
+    t.s = playerS + 340 + Math.random() * 80;
+    t.laneX = t.homeLaneX;
+    t.speed = t.desiredSpeed;
+    t.nearMissed = false;
+    t.slammedByPlayer = false;
+    t.slammedByPlayerTimer = 0;
+  }
+
+  private resolveCarVsCarCollisions(): void {
+    for (let i = 0; i < this.traffic.length; i++) {
+      const a = this.traffic[i];
+      if (a.disabledTimer > 0) continue;
+      for (let j = i + 1; j < this.traffic.length; j++) {
+        const b = this.traffic[j];
+        if (b.disabledTimer > 0) continue;
+        const minLen = a.halfLength + b.halfLength + 0.9;
+        const minWid = a.halfWidth + b.halfWidth + 0.35;
+        const ds = b.s - a.s;
+        const dx = b.laneX - a.laneX;
+        const overlapS = minLen - Math.abs(ds);
+        const overlapX = minWid - Math.abs(dx);
+        if (overlapS <= 0 || overlapX <= 0) continue;
+
+        if (a.roadblock || b.roadblock) {
+          const mob = a.roadblock ? b : a;
+          const blk = a.roadblock ? a : b;
+          const signS = mob.s >= blk.s ? 1 : -1;
+          mob.s = blk.s + signS * (blk.halfLength + mob.halfLength + 1.0);
+          mob.speed *= -0.15;
+          mob.brakeTimer = Math.max(mob.brakeTimer, 1.5);
+          continue;
+        }
+
+        if (overlapX < overlapS * 0.45 && overlapX < 1.6) {
+          const pushX = (Math.sign(dx || (a.id < b.id ? 1 : -1)) * overlapX) * 0.54;
+          a.laneX = Math.max(-PLAYABLE_HALF_WIDTH + a.halfWidth, Math.min(PLAYABLE_HALF_WIDTH - a.halfWidth, a.laneX - pushX));
+          b.laneX = Math.max(-PLAYABLE_HALF_WIDTH + b.halfWidth, Math.min(PLAYABLE_HALF_WIDTH - b.halfWidth, b.laneX + pushX));
+          a.latVel -= Math.sign(pushX) * 2.2;
+          b.latVel += Math.sign(pushX) * 2.2;
+        } else {
+          const signS = ds >= 0 ? 1 : -1;
+          const pushS = overlapS * 0.54;
+          a.s -= signS * pushS;
+          b.s += signS * pushS;
+          const avgSpd = (a.speed + b.speed) * 0.5;
+          a.speed = signS > 0 ? Math.min(a.speed, avgSpd) : Math.max(a.speed, avgSpd);
+          b.speed = signS > 0 ? Math.max(b.speed, avgSpd) : Math.min(b.speed, avgSpd);
+        }
+
+        // Guarantee zero residual AABB penetration after lateral clamp
+        if (Math.abs(a.s - b.s) < a.halfLength + b.halfLength + 0.3 && Math.abs(a.laneX - b.laneX) < a.halfWidth + b.halfWidth + 0.15) {
+          const signS = b.s >= a.s ? 1 : -1;
+          const extra = (a.halfLength + b.halfLength + 0.5 - Math.abs(a.s - b.s)) * 0.52;
+          a.s -= signS * extra;
+          b.s += signS * extra;
+        }
+
+        if (a.slammedByPlayerTimer > 0 || b.slammedByPlayerTimer > 0) {
+          const slamDir = Math.sign(dx || 1);
+          a.slammedByPlayer = true;
+          b.slammedByPlayer = true;
+          a.slammedByPlayerTimer = 4.0;
+          b.slammedByPlayerTimer = 4.0;
+          a.rollAngle = slamDir * 0.14;
+          b.rollAngle = -slamDir * 0.14;
+          a.hazardTimer = 2.6;
+          b.hazardTimer = 2.6;
+          if (Math.abs(a.s - this.player.s) < 60) {
+            this.audio.playCarHorn(0.95);
+          }
+        }
+      }
+    }
+
+    let overlaps = 0;
+    for (let i = 0; i < this.traffic.length; i++) {
+      const a = this.traffic[i];
+      if (a.disabledTimer > 0) continue;
+      for (let j = i + 1; j < this.traffic.length; j++) {
+        const b = this.traffic[j];
+        if (b.disabledTimer > 0) continue;
+        if (Math.abs(a.s - b.s) < a.halfLength + b.halfLength && Math.abs(a.laneX - b.laneX) < a.halfWidth + b.halfWidth) {
+          overlaps++;
+        }
+      }
+    }
+    this.lastOverlapCount = overlaps;
   }
 
   private emitSnapshot(): void {
@@ -2047,9 +2315,16 @@ export class GameEngine {
         if (targetCar) {
           targetCar.disabledTimer = 0;
           targetCar.oncoming = false;
+          targetCar.homeLaneX = 1.95;
+          targetCar.desiredSpeed = 20;
           targetCar.speed = 20;
           targetCar.s = this.player.s + 10.5;
           targetCar.laneX = this.player.laneX;
+          for (const other of this.traffic) {
+            if (other !== targetCar && Math.abs(other.s - targetCar.s) < 16) {
+              other.s += 36;
+            }
+          }
         }
         const pW = this.track.toWorld(this.player.s, this.player.laneX);
         this.cameraRig.reset(pW.yaw, pW.y);

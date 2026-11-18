@@ -186,13 +186,32 @@ async function main() {
     // Stage 1: Pacific Coast Beach Highway (Daytime Coastal + Palm Trees + Ocean)
     await cdp.send("Runtime.evaluate", {
       expression:
-        "window.__GAME_DEBUG__.setCameraMode(0); window.__GAME_DEBUG__.startRace('vice', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.04 });",
+        "window.__GAME_DEBUG__.setCameraMode(0); window.__GAME_DEBUG__.startRace('vice', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.03 });",
       userGesture: true,
     });
-    await sleep(3000);
+    await sleep(3200);
     const viceDiag = await diag();
     console.log("03 Coastal Beach diag:", viceDiag);
     await snap("03_beach_chase.png");
+
+    // 4.5s Traffic & Stability Stress Check (0 car-through-car overlaps, 0 phantom TRAFFIC SLAM popups)
+    let peakCruiseMph = viceDiag?.speedMph ?? 0;
+    for (let sIdx = 0; sIdx < 15; sIdx++) {
+      await sleep(300);
+      const sd = await diag();
+      if (!sd) throw new Error("Missing diagnostics during 4.5s cruise stress check");
+      if (sd.speedMph > peakCruiseMph) peakCruiseMph = sd.speedMph;
+      if ((sd.overlappingTrafficPairs ?? 0) > 0) {
+        throw new Error(`Traffic overlap detected during cruise stress step ${sIdx}: ${JSON.stringify(sd)}`);
+      }
+      if ((sd.bannerText || "").includes("TRAFFIC SLAM")) {
+        throw new Error(`Phantom TRAFFIC SLAM popup triggered without player involvement: ${JSON.stringify(sd)}`);
+      }
+    }
+    console.log("03a 4.5s cruise stress passed:", { peakCruiseMph, overlapPairs: 0 });
+    if (peakCruiseMph < 115) {
+      throw new Error(`Expected highway speed >= 115 MPH during cruise stress, peaked at ${peakCruiseMph}`);
+    }
 
     if (!viceDiag || viceDiag.speedMph < 85 || viceDiag.distanceMeters < 40) {
       throw new Error(`Insufficient race progress/speed in Coastal Beach Hwy: ${JSON.stringify(viceDiag)}`);

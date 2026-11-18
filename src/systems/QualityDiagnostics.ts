@@ -18,6 +18,8 @@ export interface GameDiagnosticsSnapshot {
   armor: number;
   cash: number;
   ragdollActive?: boolean;
+  overlappingTrafficPairs?: number;
+  bannerText?: string;
   activeTrafficKinds?: string[];
   audioDiagnostics?: AudioDiagnostics;
   renderer: {

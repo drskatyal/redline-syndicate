@@ -45,7 +45,7 @@ export interface RampItem {
 }
 
 const SEGMENTS_VISIBLE = 76;
-const SEG_LEN = 6; // 456m visible ribbon
+const SEG_LEN = 8; // 608m visible highway ribbon blending deep into atmospheric fog
 
 // 8-column crowned cross-section [-0.5 .. +0.5] across highway width
 const ROAD_COLS = [-0.5, -0.46, -0.25, -0.04, 0.04, 0.25, 0.46, 0.5];
@@ -62,6 +62,10 @@ export class TrackSystem {
   private shoulderMesh: THREE.Mesh;
   private oceanGeo: THREE.BufferGeometry;
   private oceanMesh: THREE.Mesh;
+  private inlandWalkGeo: THREE.BufferGeometry;
+  private inlandWalkMesh: THREE.Mesh;
+  private horizonMat: THREE.MeshLambertMaterial;
+  private horizonMesh: THREE.Mesh;
 
   // Instanced Poly Haven PBR prop meshes + Coastal Palms
   private barrierInsts: THREE.InstancedMesh[] = [];
@@ -170,6 +174,30 @@ export class TrackSystem {
     this.oceanMesh.visible = false;
     this.group.add(this.oceanMesh);
 
+    // Paved coastal inland boulevard / sidewalk (vice Left side so hotels/palms stand on concrete)
+    const iwPos = new Float32Array(ocVCount * 3);
+    const iwNorm = new Float32Array(ocVCount * 3);
+    const iwUv = new Float32Array(ocVCount * 2);
+    this.inlandWalkGeo = new THREE.BufferGeometry();
+    this.inlandWalkGeo.setAttribute("position", new THREE.BufferAttribute(iwPos, 3));
+    this.inlandWalkGeo.setAttribute("normal", new THREE.BufferAttribute(iwNorm, 3));
+    this.inlandWalkGeo.setAttribute("uv", new THREE.BufferAttribute(iwUv, 2));
+    this.inlandWalkGeo.setIndex(ocIndices);
+    this.inlandWalkMesh = new THREE.Mesh(this.inlandWalkGeo, kit.concreteMat);
+    this.inlandWalkMesh.receiveShadow = true;
+    this.inlandWalkMesh.frustumCulled = false;
+    this.inlandWalkMesh.visible = false;
+    this.group.add(this.inlandWalkMesh);
+
+    // Far under-horizon terrain floor skirt so terrain hills & far ribbon never leave empty sky below
+    this.horizonMat = new THREE.MeshLambertMaterial({ color: 0x3b82f6 });
+    const hGeo = new THREE.PlaneGeometry(2800, 2800);
+    hGeo.rotateX(-Math.PI * 0.5);
+    this.horizonMesh = new THREE.Mesh(hGeo, this.horizonMat);
+    this.horizonMesh.position.set(0, -28, 0);
+    this.horizonMesh.frustumCulled = false;
+    this.group.add(this.horizonMesh);
+
     const buildInstList = (tpl: PropTemplate, maxCount: number, castShadow: boolean): THREE.InstancedMesh[] => {
       return tpl.parts.map((part) => {
         const im = new THREE.InstancedMesh(part.geometry, part.material, maxCount);
@@ -205,8 +233,8 @@ export class TrackSystem {
     this.gantryPostInst = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.18, 0.22, 6.8, 8), kit.darkAlloyMat, 16);
     this.gantryBeamInst = new THREE.InstancedMesh(new THREE.BoxGeometry(ROAD_WIDTH + 2.4, 0.42, 0.42), kit.darkAlloyMat, 8);
     this.gantrySignInst = new THREE.InstancedMesh(new THREE.BoxGeometry(8.6, 2.2, 0.16), kit.highwaySignMat, 8);
-    this.bridgeDeckInst = new THREE.InstancedMesh(new THREE.BoxGeometry(58, 1.8, 9.5), kit.concreteMat, 6);
-    this.bridgePierInst = new THREE.InstancedMesh(new THREE.BoxGeometry(2.8, 14.0, 9.0), kit.concreteMat, 12);
+    this.bridgeDeckInst = new THREE.InstancedMesh(new THREE.BoxGeometry(118, 2.2, 10.4), kit.concreteMat, 6);
+    this.bridgePierInst = new THREE.InstancedMesh(new THREE.BoxGeometry(3.2, 22.0, 9.8), kit.concreteMat, 12);
 
     // 6. Varied Architectural High-Rise & Mid-Rise Buildings (4 distinct silhouettes & facades)
     const skyTpls = createSkyscraperTemplates();
@@ -259,6 +287,8 @@ export class TrackSystem {
 
     const isBeach = stage.biome === "vice";
     this.oceanMesh.visible = isBeach;
+    this.inlandWalkMesh.visible = isBeach;
+    this.horizonMat.color.setHex(isBeach ? 0x1e6091 : stage.groundHex);
     this.shoulderMesh.material = isBeach ? this.kit.beachSandMat : this.kit.shoulderGroundMat;
 
     if (!isBeach) {
@@ -357,6 +387,11 @@ export class TrackSystem {
     const oPos = this.oceanGeo.attributes.position as THREE.BufferAttribute;
     const oNorm = this.oceanGeo.attributes.normal as THREE.BufferAttribute;
     const oUv = this.oceanGeo.attributes.uv as THREE.BufferAttribute;
+    const iwPos = this.inlandWalkGeo.attributes.position as THREE.BufferAttribute;
+    const iwNorm = this.inlandWalkGeo.attributes.normal as THREE.BufferAttribute;
+    const iwUv = this.inlandWalkGeo.attributes.uv as THREE.BufferAttribute;
+    const camPt = this.sample(cameraS);
+    this.horizonMesh.position.set(camPt.x, Math.min(camPt.y - 18, -28), cameraS + 300);
 
     const cols = ROAD_COLS.length;
     for (let i = 0; i <= SEGMENTS_VISIBLE; i++) {
@@ -403,6 +438,13 @@ export class TrackSystem {
         oNorm.setXYZ(oBase + 1, 0, 1, 0);
         oUv.setXY(oBase, 0, vCoord * 0.6);
         oUv.setXY(oBase + 1, 6, vCoord * 0.6);
+
+        iwPos.setXYZ(oBase, pt.x + rightX * -82, pt.y - 0.04, s + rightZ * -82);
+        iwPos.setXYZ(oBase + 1, pt.x + rightX * (-ROAD_WIDTH * 0.5), pt.y - 0.04, s + rightZ * (-ROAD_WIDTH * 0.5));
+        iwNorm.setXYZ(oBase, 0, ny, nz);
+        iwNorm.setXYZ(oBase + 1, 0, ny, nz);
+        iwUv.setXY(oBase, 0, vCoord * 1.4);
+        iwUv.setXY(oBase + 1, 4, vCoord * 1.4);
       }
     }
 
@@ -416,12 +458,15 @@ export class TrackSystem {
       oPos.needsUpdate = true;
       oNorm.needsUpdate = true;
       oUv.needsUpdate = true;
+      iwPos.needsUpdate = true;
+      iwNorm.needsUpdate = true;
+      iwUv.needsUpdate = true;
     }
 
-    // 1. Concrete Jersey Barriers along both sides every 5.4m
+    // 1. Continuous flush concrete Jersey barriers along both sides every 5.4m
     let barrierIdx = 0;
     const barrierStep = 5.4;
-    const firstBarrierS = Math.floor((cameraS - 18) / barrierStep) * barrierStep;
+    const firstBarrierS = Math.floor((cameraS - 20) / barrierStep) * barrierStep;
     for (let k = 0; k < 46; k++) {
       const s = firstBarrierS + k * barrierStep;
       const wCenter = this.toWorld(s, 0);
@@ -434,7 +479,7 @@ export class TrackSystem {
           wCenter.z + wCenter.rightZ * off
         );
         this.tmpDummy.rotation.set(wCenter.pitch, wCenter.yaw, 0);
-        this.tmpDummy.scale.set(1, 1, 2.45);
+        this.tmpDummy.scale.set(1, 1, 5.15);
         this.tmpDummy.updateMatrix();
         for (const im of this.barrierInsts) im.setMatrixAt(barrierIdx, this.tmpDummy.matrix);
         barrierIdx++;
@@ -508,26 +553,28 @@ export class TrackSystem {
     }
 
     let bridgePierIdx = 0;
-    const bridgeStep = 180;
-    const firstBridgeS = Math.floor((cameraS - 10) / bridgeStep) * bridgeStep;
-    for (let k = 0; k < 4; k++) {
-      const s = firstBridgeS + k * bridgeStep;
-      if (s < 100 || bridgeIdx >= 6) continue;
-      const wc = this.toWorld(s, 0);
-      this.tmpDummy.position.set(wc.x, wc.y + 8.6, wc.z);
-      this.tmpDummy.rotation.set(0, wc.yaw * 0.45, 0);
-      this.tmpDummy.scale.set(1, 1, 1);
-      this.tmpDummy.updateMatrix();
-      this.bridgeDeckInst.setMatrixAt(bridgeIdx++, this.tmpDummy.matrix);
+    if (!isBeach) {
+      const bridgeStep = 220;
+      const firstBridgeS = Math.floor((cameraS - 10) / bridgeStep) * bridgeStep;
+      for (let k = 0; k < 4; k++) {
+        const s = firstBridgeS + k * bridgeStep;
+        if (s < 140 || bridgeIdx >= 6) continue;
+        const wc = this.toWorld(s, 0);
+        this.tmpDummy.position.set(wc.x, wc.y + 8.6, wc.z);
+        this.tmpDummy.rotation.set(0, wc.yaw * 0.45, 0);
+        this.tmpDummy.scale.set(1, 1, 1);
+        this.tmpDummy.updateMatrix();
+        this.bridgeDeckInst.setMatrixAt(bridgeIdx++, this.tmpDummy.matrix);
 
-      for (const side of [-1, 1]) {
-        if (bridgePierIdx < 12) {
-          const off = side * 19.5;
-          this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y + 3.0, wc.z + wc.rightZ * off);
-          this.tmpDummy.rotation.set(0, wc.yaw * 0.45, 0);
-          this.tmpDummy.scale.set(1, 1, 1);
-          this.tmpDummy.updateMatrix();
-          this.bridgePierInst.setMatrixAt(bridgePierIdx++, this.tmpDummy.matrix);
+        for (const side of [-1, 1]) {
+          if (bridgePierIdx < 12) {
+            const off = side * 24.0;
+            this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y - 1.5, wc.z + wc.rightZ * off);
+            this.tmpDummy.rotation.set(0, wc.yaw * 0.45, 0);
+            this.tmpDummy.scale.set(1, 1, 1);
+            this.tmpDummy.updateMatrix();
+            this.bridgePierInst.setMatrixAt(bridgePierIdx++, this.tmpDummy.matrix);
+          }
         }
       }
     }
@@ -615,8 +662,8 @@ export class TrackSystem {
         if (s < 20 || umbIdx >= 24) continue;
         const slot = Math.round(s / umbStep);
         const wc = this.toWorld(s, 0);
-        const off = ROAD_WIDTH * 0.5 + 11.5 + (Math.abs(slot * 5) % 8);
-        this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y - 1.35, wc.z + wc.rightZ * off);
+        const off = ROAD_WIDTH * 0.5 + 15.0 + (Math.abs(slot * 5) % 7);
+        this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y - 1.25, wc.z + wc.rightZ * off);
         this.tmpDummy.rotation.set(0.06 * Math.sin(slot), slot * 0.8, 0.05 * Math.cos(slot));
         this.tmpDummy.scale.setScalar(1.1);
         this.tmpDummy.updateMatrix();
@@ -649,6 +696,8 @@ export class TrackSystem {
     let treeIdx = 0;
     let shrubIdx = 0;
     let boulderIdx = 0;
+    const usePalms = isBeach || this.stage?.biome === "kowloon" || this.stage?.biome === "sanverona";
+    const useDesertTrees = this.stage?.biome === "dubai";
     const propStep = isBeach ? 22 : 26;
     const firstProp = Math.floor((cameraS - 20) / propStep) * propStep;
     for (let k = 0; k < 18; k++) {
@@ -657,12 +706,12 @@ export class TrackSystem {
       const wc = this.toWorld(s, 0);
       for (const side of [-1, 1]) {
         const dist = ROAD_WIDTH * 0.5 + 3.0 + (Math.abs(slot * 7 + side * 3) % 7);
-        if (isBeach && palmIdx < 36) {
-          const palmOff = side * (ROAD_WIDTH * 0.5 + 2.4 + (Math.abs(slot * 3) % 3));
+        if (usePalms && palmIdx < 36) {
+          const palmOff = side * (ROAD_WIDTH * 0.5 + 2.6 + (Math.abs(slot * 3) % 3));
           const sc = 0.85 + (Math.abs(slot * 5) % 3) * 0.18;
           this.tmpDummy.position.set(
             wc.x + wc.rightX * palmOff,
-            wc.y - (side > 0 ? 0.35 : 0.12),
+            wc.y - (isBeach && side > 0 ? 0.25 : 0.1),
             wc.z + wc.rightZ * palmOff
           );
           this.tmpDummy.rotation.set(0, slot * 0.95 + (side < 0 ? Math.PI : 0), 0);
@@ -671,7 +720,7 @@ export class TrackSystem {
           for (const im of this.palmInsts) im.setMatrixAt(palmIdx, this.tmpDummy.matrix);
           palmIdx++;
         }
-        if ((this.stage?.biome === "alpine" || this.stage?.biome === "dubai") && boulderIdx < 24 && (slot + side) % 2 === 0) {
+        if ((this.stage?.biome === "alpine" || useDesertTrees) && boulderIdx < 24 && (slot + side) % 2 === 0) {
           const sc = 1.1 + (Math.abs(slot * 3) % 4) * 0.45;
           const off = side * (dist + 2.5);
           this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y - 0.6, wc.z + wc.rightZ * off);
@@ -681,7 +730,7 @@ export class TrackSystem {
           for (const im of this.boulderInsts) im.setMatrixAt(boulderIdx, this.tmpDummy.matrix);
           boulderIdx++;
         }
-        if (!isBeach && this.stage?.biome !== "alpine" && treeIdx < 28 && (slot + side) % 2 === 1) {
+        if (useDesertTrees && treeIdx < 28 && (slot + side) % 2 === 1) {
           const sc = 0.9 + (Math.abs(slot * 5) % 3) * 0.28;
           const off = side * dist;
           this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y - 0.25, wc.z + wc.rightZ * off);
@@ -691,7 +740,7 @@ export class TrackSystem {
           for (const im of this.treeInsts) im.setMatrixAt(treeIdx, this.tmpDummy.matrix);
           treeIdx++;
         }
-        if (!isBeach && shrubIdx < 32) {
+        if (!usePalms && shrubIdx < 32) {
           const sc = 0.85 + (Math.abs(slot * 9) % 3) * 0.3;
           const off = side * (ROAD_WIDTH * 0.5 + 2.1);
           this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y - 0.1, wc.z + wc.rightZ * off + 6);

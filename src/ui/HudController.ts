@@ -90,6 +90,7 @@ export class HudController {
     this.muteBtn.addEventListener("click", () => {
       const s = this.engine.save.settings;
       this.engine.updateAudioSettings(s.musicVolume, s.sfxVolume, !s.muted);
+      this.muteBtn.blur();
     });
     this.musicRange.addEventListener("input", () => {
       const s = this.engine.save.settings;
@@ -100,11 +101,15 @@ export class HudController {
       this.engine.updateAudioSettings(s.musicVolume, Number(this.sfxRange.value), s.muted);
     });
 
-    document.getElementById("hudRadioBtn")!.addEventListener("click", () => {
+    const radioBtn = document.getElementById("hudRadioBtn") as HTMLButtonElement | null;
+    radioBtn?.addEventListener("click", () => {
       this.engine.cycleRadioStation();
+      radioBtn.blur();
     });
-    document.getElementById("hudCamBtn")!.addEventListener("click", () => {
+    const camBtn = document.getElementById("hudCamBtn") as HTMLButtonElement | null;
+    camBtn?.addEventListener("click", () => {
       this.engine.save.settings.cameraMode = (this.engine.save.settings.cameraMode + 1) % 3;
+      camBtn.blur();
     });
     const toggleFs = () => {
       if (document.fullscreenElement) {
@@ -113,15 +118,27 @@ export class HudController {
         document.documentElement.requestFullscreen().catch(() => {});
       }
     };
-    document.getElementById("fullscreenBtn")?.addEventListener("click", toggleFs);
-    document.getElementById("hudFsBtn")?.addEventListener("click", toggleFs);
+    const fsBtn = document.getElementById("fullscreenBtn") as HTMLButtonElement | null;
+    fsBtn?.addEventListener("click", () => {
+      toggleFs();
+      fsBtn.blur();
+    });
+    const hudFsBtn = document.getElementById("hudFsBtn") as HTMLButtonElement | null;
+    hudFsBtn?.addEventListener("click", () => {
+      toggleFs();
+      hudFsBtn.blur();
+    });
     window.addEventListener("keydown", (e) => {
       if (e.code === "F11") {
         e.preventDefault();
         toggleFs();
       }
     });
-    document.getElementById("hudPauseBtn")!.addEventListener("click", () => this.engine.togglePause());
+    const pauseBtn = document.getElementById("hudPauseBtn") as HTMLButtonElement | null;
+    pauseBtn?.addEventListener("click", () => {
+      this.engine.togglePause();
+      pauseBtn.blur();
+    });
     document.getElementById("btnResume")!.addEventListener("click", () => {
       this.pauseModal.hidden = true;
       this.engine.resumeRace();
