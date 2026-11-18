@@ -31,8 +31,30 @@ interface BillboardParticle {
   endScale: number;
 }
 
+interface DebrisPiece {
+  active: boolean;
+  x: number;
+  y: number;
+  z: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  rx: number;
+  ry: number;
+  rz: number;
+  vrx: number;
+  vry: number;
+  vrz: number;
+  groundY: number;
+  scale: number;
+  life: number;
+  maxLife: number;
+  color: THREE.Color;
+}
+
 const MAX_SPARKS = 260;
 const MAX_BILLBOARDS = 96;
+const MAX_DEBRIS = 56;
 const RAIN_COUNT = 180;
 
 export class VfxSystem {
@@ -40,6 +62,7 @@ export class VfxSystem {
   private sparkInst: THREE.InstancedMesh;
   private smokeInst: THREE.InstancedMesh;
   private fireInst: THREE.InstancedMesh;
+  private debrisInst: THREE.InstancedMesh;
   private rainInst: THREE.InstancedMesh;
 
   private sparks: Particle[] = [];
@@ -47,6 +70,9 @@ export class VfxSystem {
 
   private billboards: BillboardParticle[] = [];
   private bbCursor = 0;
+
+  private debris: DebrisPiece[] = [];
+  private debrisCursor = 0;
 
   private rainOffsets: Float32Array;
   private dummy = new THREE.Object3D();
@@ -124,6 +150,41 @@ export class VfxSystem {
         maxLife: 1,
         startScale: 0.5,
         endScale: 2.0,
+      });
+    }
+
+    const debrisGeo = new THREE.BoxGeometry(0.18, 0.045, 0.28);
+    const debrisMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.22,
+      metalness: 0.65,
+      envMapIntensity: 1.4,
+    });
+    this.debrisInst = new THREE.InstancedMesh(debrisGeo, debrisMat, MAX_DEBRIS);
+    this.debrisInst.count = 0;
+    this.debrisInst.frustumCulled = false;
+    this.group.add(this.debrisInst);
+
+    for (let i = 0; i < MAX_DEBRIS; i++) {
+      this.debris.push({
+        active: false,
+        x: 0,
+        y: 0,
+        z: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        rx: 0,
+        ry: 0,
+        rz: 0,
+        vrx: 0,
+        vry: 0,
+        vrz: 0,
+        groundY: 0,
+        scale: 1,
+        life: 0,
+        maxLife: 1,
+        color: new THREE.Color(0xdbeafe),
       });
     }
 
@@ -207,6 +268,43 @@ export class VfxSystem {
     }
   }
 
+  public spawnDebrisBurst(
+    x: number,
+    y: number,
+    z: number,
+    baseVx: number,
+    baseVz: number,
+    paintHex: number,
+    count = 20,
+    groundY = 0
+  ): void {
+    for (let i = 0; i < count; i++) {
+      const d = this.debris[this.debrisCursor];
+      this.debrisCursor = (this.debrisCursor + 1) % MAX_DEBRIS;
+      d.active = true;
+      d.x = x + (Math.random() - 0.5) * 0.9;
+      d.y = y + Math.random() * 0.65;
+      d.z = z + (Math.random() - 0.5) * 0.9;
+      d.vx = baseVx + (Math.random() - 0.5) * 14;
+      d.vy = 3.8 + Math.random() * 7.8;
+      d.vz = baseVz + (Math.random() - 0.35) * 12;
+      d.rx = Math.random() * Math.PI;
+      d.ry = Math.random() * Math.PI;
+      d.rz = Math.random() * Math.PI;
+      d.vrx = (Math.random() - 0.5) * 20;
+      d.vry = (Math.random() - 0.5) * 20;
+      d.vrz = (Math.random() - 0.5) * 20;
+      d.groundY = groundY;
+      d.scale = 0.65 + Math.random() * 1.15;
+      d.maxLife = 1.55 + Math.random() * 0.75;
+      d.life = d.maxLife;
+      const roleRoll = i % 5;
+      if (roleRoll < 2) d.color.setHex(0xbae6fd); // tempered windshield glass shard
+      else if (roleRoll < 4) d.color.setHex(paintHex); // painted car panel
+      else d.color.setHex(0x1e293b); // carbon bumper trim
+    }
+  }
+
   public update(dt: number, camX: number, camY: number, camZ: number, speedMps: number, hasRain: boolean): void {
     let activeSparks = 0;
     for (let i = 0; i < MAX_SPARKS; i++) {
@@ -274,6 +372,49 @@ export class VfxSystem {
     this.fireInst.count = fireCount;
     this.fireInst.instanceMatrix.needsUpdate = true;
     if (this.fireInst.instanceColor) this.fireInst.instanceColor.needsUpdate = true;
+
+    let debrisCount = 0;
+    for (let i = 0; i < MAX_DEBRIS; i++) {
+      const d = this.debris[i];
+      if (!d.active) continue;
+      d.life -= dt;
+      if (d.life <= 0) {
+        d.active = false;
+        continue;
+      }
+      d.vy -= 24 * dt;
+      d.x += d.vx * dt;
+      d.y += d.vy * dt;
+      d.z += d.vz * dt;
+      d.rx += d.vrx * dt;
+      d.ry += d.vry * dt;
+      d.rz += d.vrz * dt;
+      if (d.y <= d.groundY + 0.05) {
+        d.y = d.groundY + 0.05;
+        if (d.vy < -2.2) {
+          d.vy = -d.vy * 0.42;
+          d.vx *= 0.68;
+          d.vz *= 0.68;
+          d.vrx *= 0.72;
+          d.vry *= 0.72;
+        } else {
+          d.vy = 0;
+          d.vx *= 0.92;
+          d.vz *= 0.92;
+        }
+      }
+      const fadeSc = d.scale * Math.min(1, d.life * 2.5);
+      this.dummy.position.set(d.x, d.y, d.z);
+      this.dummy.rotation.set(d.rx, d.ry, d.rz);
+      this.dummy.scale.setScalar(fadeSc);
+      this.dummy.updateMatrix();
+      this.debrisInst.setMatrixAt(debrisCount, this.dummy.matrix);
+      this.debrisInst.setColorAt(debrisCount, d.color);
+      debrisCount++;
+    }
+    this.debrisInst.count = debrisCount;
+    this.debrisInst.instanceMatrix.needsUpdate = true;
+    if (this.debrisInst.instanceColor) this.debrisInst.instanceColor.needsUpdate = true;
 
     const showStreaks = hasRain;
     this.rainInst.visible = showStreaks;

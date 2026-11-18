@@ -106,6 +106,7 @@ async function main() {
         "--headless=new",
         `--remote-debugging-port=${CDP_PORT}`,
         `--user-data-dir=${PROFILE_DIR}`,
+        "--autoplay-policy=no-user-gesture-required",
         "--enable-webgl",
         "--ignore-gpu-blocklist",
         "--disable-gpu-sandbox",
@@ -186,6 +187,7 @@ async function main() {
     await cdp.send("Runtime.evaluate", {
       expression:
         "window.__GAME_DEBUG__.setCameraMode(0); window.__GAME_DEBUG__.startRace('vice', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.04 });",
+      userGesture: true,
     });
     await sleep(3000);
     const viceDiag = await diag();
@@ -194,6 +196,46 @@ async function main() {
 
     if (!viceDiag || viceDiag.speedMph < 85 || viceDiag.distanceMeters < 40) {
       throw new Error(`Insufficient race progress/speed in Coastal Beach Hwy: ${JSON.stringify(viceDiag)}`);
+    }
+    if (!viceDiag.activeTrafficKinds || viceDiag.activeTrafficKinds.length < 3) {
+      throw new Error(`Expected >= 3 traffic types, got: ${JSON.stringify(viceDiag.activeTrafficKinds)}`);
+    }
+    if (!viceDiag.audioDiagnostics?.musicPlaying || (viceDiag.audioDiagnostics?.buffersLoaded ?? 0) < 5) {
+      throw new Error(`Audio/SFX buffers did not initialize properly: ${JSON.stringify(viceDiag.audioDiagnostics)}`);
+    }
+    await cdp.send("Runtime.evaluate", { expression: "window.__GAME_DEBUG__.cycleRadioStation();", userGesture: true });
+    await sleep(250);
+    const radioDiag = await diag();
+    console.log("03b Radio switch diag:", radioDiag.audioDiagnostics);
+    if (radioDiag.audioDiagnostics?.stationIndex === viceDiag.audioDiagnostics?.stationIndex) {
+      throw new Error(`Radio station did not switch! ${JSON.stringify(radioDiag.audioDiagnostics)}`);
+    }
+
+    // Catastrophic Car-Crash Ragdoll Ejection Test (145+ MPH slam into Ferrari rear bumper)
+    await cdp.send("Runtime.evaluate", {
+      expression: "window.__GAME_DEBUG__.setCameraMode(0); window.__GAME_DEBUG__.forceCarCrashTest(); window.__GAME_DEBUG__.setBotInput({ throttle: true, steer: 0 });",
+    });
+    let crashDiag = null;
+    for (let k = 0; k < 14; k++) {
+      await sleep(75);
+      const d = await diag();
+      if (d?.ragdollActive) {
+        crashDiag = d;
+        await sleep(160); // capture mid-air peak tumbling over hood
+        crashDiag = await diag();
+        break;
+      }
+    }
+    console.log("03c Car-Crash Ragdoll diag:", crashDiag);
+    await snap("06_car_crash_ragdoll.png");
+    if (!crashDiag || !crashDiag.ragdollActive) {
+      throw new Error(`Expected ragdollActive=true on high-speed car crash, got: ${JSON.stringify(crashDiag)}`);
+    }
+    await sleep(2350);
+    const recoveredDiag = await diag();
+    console.log("03d Post-crash remount diag:", { ragdollActive: recoveredDiag?.ragdollActive, speedMph: recoveredDiag?.speedMph });
+    if (recoveredDiag?.ragdollActive) {
+      throw new Error("Rider did not remount motorcycle after crash timer expired!");
     }
 
     // Steering Sign Assertion 1: Press RIGHT (+1) -> must move to Screen Right (laneOffset > +2.2 && playerScreenXPct > 51.5)
@@ -242,7 +284,7 @@ async function main() {
     await sleep(2000);
     const cityDiag = await diag();
     console.log("06 City Metro diag:", cityDiag);
-    await snap("06_city_metro.png");
+    await snap("07_city_metro.png");
 
     // Stage 5: Harbor Night Freeway + Police Helicopter & Patrol Pursuit + Rider POV
     await cdp.send("Runtime.evaluate", {
@@ -251,8 +293,8 @@ async function main() {
     });
     await sleep(2000);
     const sanDiag = await diag();
-    console.log("07 Night Pursuit diag:", sanDiag);
-    await snap("07_night_pursuit.png");
+    console.log("08 Night Pursuit diag:", sanDiag);
+    await snap("08_night_pursuit.png");
 
     // Rider Handlebar POV (Camera Mode 2)
     await cdp.send("Runtime.evaluate", {
@@ -261,8 +303,8 @@ async function main() {
     await sleep(900);
     await cdp.send("Runtime.evaluate", { expression: "window.__GAME_DEBUG__.setBotInput(null);" });
     const povDiag = await diag();
-    console.log("08 Rider POV diag:", povDiag);
-    await snap("08_rider_pov.png");
+    console.log("09 Rider POV diag:", povDiag);
+    await snap("09_rider_pov.png");
 
     console.log("\n=== ERRORS ===");
     console.log(errors.length ? errors.join("\n") : "(none)");

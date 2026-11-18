@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
 import { GLTF, GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 
 export interface HdrEnvironmentPack {
   day: { equirect: THREE.DataTexture; pmrem: THREE.Texture };
@@ -16,6 +17,8 @@ export interface LoadedAssets {
     heroBike: GLTF;
     humanRider: GLTF;
     ferrari: GLTF;
+    teslaSedan: GLTF;
+    bmwCoupe: GLTF;
     milkTruck: GLTF;
     helicopter: GLTF;
     roadBarrier: GLTF;
@@ -34,8 +37,13 @@ export interface LoadedAssets {
     sandDiff: THREE.Texture;
     sandNor: THREE.Texture;
     sandRough: THREE.Texture;
+    palmBarkDiff: THREE.Texture;
+    palmLeafDiff: THREE.Texture;
     facadeNight: THREE.Texture;
     facadeDay: THREE.Texture;
+    facadeCoastal: THREE.Texture;
+    facadeBrick: THREE.Texture;
+    facadeConcrete: THREE.Texture;
     highwaySigns: THREE.Texture;
     flame: THREE.Texture;
     smoke: THREE.Texture;
@@ -64,11 +72,13 @@ async function internalLoadAll(
   dracoLoader.setDecoderPath("./draco/");
   dracoLoader.preload();
   gltfLoader.setDRACOLoader(dracoLoader);
+  await MeshoptDecoder.ready;
+  gltfLoader.setMeshoptDecoder(MeshoptDecoder);
 
   const rgbeLoader = new RGBELoader();
   const texLoader = new THREE.TextureLoader();
 
-  const totalItems = 29;
+  const totalItems = 36;
   let completed = 0;
   const tick = (label: string) => {
     completed++;
@@ -119,6 +129,8 @@ async function internalLoadAll(
     heroBike,
     humanRider,
     ferrari,
+    teslaSedan,
+    bmwCoupe,
     milkTruck,
     helicopter,
     roadBarrier,
@@ -135,8 +147,13 @@ async function internalLoadAll(
     sandDiff,
     sandNor,
     sandRough,
+    palmBarkDiff,
+    palmLeafDiff,
     facadeNight,
     facadeDay,
+    facadeCoastal,
+    facadeBrick,
+    facadeConcrete,
     highwaySigns,
     flame,
     smoke,
@@ -147,8 +164,10 @@ async function internalLoadAll(
     loadHdr("./hdr/sunrise.hdr", "HDR Mountain Morning"),
     loadHdr("./hdr/night.hdr", "HDR Midnight Skybox"),
     loadGltf("./models/hero-motorcycle.glb", "Brembo Superbike 3D"),
-    loadGltf("./models/human-rider.glb", "Human Street Rider"),
-    loadGltf("./models/ferrari.glb", "Traffic & Pursuit Cars"),
+    loadGltf("./models/human-rider.glb", "Armored Street Rider"),
+    loadGltf("./models/ferrari.glb", "Exotic Supercar Traffic"),
+    loadGltf("./models/tesla-sedan.glb", "Tesla Model 3 Traffic"),
+    loadGltf("./models/bmw-coupe.glb", "BMW M3 E30 Traffic"),
     loadGltf("./models/milk-truck.glb", "Commercial Transport Truck"),
     loadGltf("./models/helicopter.glb", "Police Pursuit Helicopter"),
     loadGltf("./models/road_barrier/concrete_road_barrier_1k.gltf", "Jersey Barriers"),
@@ -165,8 +184,13 @@ async function internalLoadAll(
     loadTex("./pbr/sand_diff.jpg", "Beach Sand Albedo", { srgb: true, repeat: true, aniso: true }),
     loadTex("./pbr/sand_nor.jpg", "Beach Sand Normal", { srgb: false, repeat: true, aniso: true }),
     loadTex("./pbr/sand_rough.jpg", "Beach Sand Roughness", { srgb: false, repeat: true, aniso: true }),
+    loadTex("./pbr/palm_bark_diff.jpg", "Palm Bark Texture", { srgb: true, repeat: true, aniso: true }),
+    loadTex("./pbr/palm_leaf_diff.jpg", "Palm Frond Foliage", { srgb: true, repeat: false, aniso: true }),
     loadTex("./pbr/facade_glass_night.jpg", "City Tower Night Facade", { srgb: true, repeat: true, aniso: true }),
     loadTex("./pbr/facade_tower_day.jpg", "City Tower Day Facade", { srgb: true, repeat: true, aniso: true }),
+    loadTex("./pbr/facade_coastal_hotel.jpg", "Coastal Hotel Facade", { srgb: true, repeat: true, aniso: true }),
+    loadTex("./pbr/facade_brick_commercial.jpg", "Urban Brick Loft Facade", { srgb: true, repeat: true, aniso: true }),
+    loadTex("./pbr/facade_modern_concrete.jpg", "Architectural Concrete Facade", { srgb: true, repeat: true, aniso: true }),
     loadTex("./pbr/highway_signs.jpg", "DOT Highway Signage", { srgb: true, aniso: true }),
     loadTex("./fx/flame.png", "Combustion FX", { srgb: true }),
     loadTex("./fx/smoke.png", "Tire Smoke FX", { srgb: true }),
@@ -176,7 +200,20 @@ async function internalLoadAll(
   if (onProgress) onProgress(99, "BAKING HDR ENVIRONMENT REFLECTIONS...");
 
   // Upgrade anisotropic filtering inside glTF materials
-  for (const gltf of [heroBike, humanRider, ferrari, milkTruck, helicopter, roadBarrier, streetLamp, tree, shrub, boulder]) {
+  for (const gltf of [
+    heroBike,
+    humanRider,
+    ferrari,
+    teslaSedan,
+    bmwCoupe,
+    milkTruck,
+    helicopter,
+    roadBarrier,
+    streetLamp,
+    tree,
+    shrub,
+    boulder,
+  ]) {
     gltf.scene.traverse((obj) => {
       const m = obj as THREE.Mesh;
       if (!m.isMesh) return;
@@ -213,6 +250,8 @@ async function internalLoadAll(
       heroBike,
       humanRider,
       ferrari,
+      teslaSedan,
+      bmwCoupe,
       milkTruck,
       helicopter,
       roadBarrier,
@@ -231,8 +270,13 @@ async function internalLoadAll(
       sandDiff,
       sandNor,
       sandRough,
+      palmBarkDiff,
+      palmLeafDiff,
       facadeNight,
       facadeDay,
+      facadeCoastal,
+      facadeBrick,
+      facadeConcrete,
       highwaySigns,
       flame,
       smoke,

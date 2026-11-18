@@ -11,6 +11,7 @@ export interface ControlIntent {
   empPressed: boolean;
   cameraPressed: boolean;
   pausePressed: boolean;
+  radioPressed: boolean;
 }
 
 export class InputController {
@@ -23,6 +24,7 @@ export class InputController {
     emp: false,
     camera: false,
     pause: false,
+    radio: false,
   };
   private touchState = {
     throttle: false,
@@ -51,6 +53,7 @@ export class InputController {
         if (code === "KeyC" || code === "KeyK") this.oneShot.kick = true;
         if (code === "KeyF") this.oneShot.emp = true;
         if (code === "KeyV") this.oneShot.camera = true;
+        if (code === "KeyM") this.oneShot.radio = true;
         if (code === "Escape" || code === "KeyP") this.oneShot.pause = true;
         if (code === "Tab" || code === "KeyR") this.focusToggle = !this.focusToggle;
       }
@@ -150,6 +153,7 @@ export class InputController {
       empPressed: this.oneShot.emp,
       cameraPressed: this.oneShot.camera,
       pausePressed: this.oneShot.pause,
+      radioPressed: this.oneShot.radio,
     };
 
     this.oneShot.strikeLeft = false;
@@ -159,6 +163,7 @@ export class InputController {
     this.oneShot.emp = false;
     this.oneShot.camera = false;
     this.oneShot.pause = false;
+    this.oneShot.radio = false;
 
     if (this.botOverride) {
       return { ...intent, ...this.botOverride };

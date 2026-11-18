@@ -1,3 +1,36 @@
+export interface RadioStationSpec {
+  id: string;
+  name: string;
+  url: string;
+}
+
+export const RADIO_STATIONS: RadioStationSpec[] = [
+  { id: "vice", name: "VICE FM // OUTRUN DRIVE", url: "./audio/racer_drive.mp3" },
+  { id: "apex", name: "APEX FM // TURBO SYNTH", url: "./audio/night_synth.mp3" },
+  { id: "pulse", name: "PULSE FM // HYPER GRID", url: "./audio/hyper_grid.ogg" },
+  { id: "coast", name: "COAST FM // SUNSET HIGHWAY", url: "./audio/sunset_outlaw.mp3" },
+];
+
+export interface AudioDiagnostics {
+  unlocked: boolean;
+  state: AudioContextState | "uninitialized";
+  stationName: string;
+  stationIndex: number;
+  musicPlaying: boolean;
+  buffersLoaded: number;
+}
+
+type SfxBufferKey = "engine" | "wind" | "skid" | "boost" | "impact" | "wreck";
+
+const SFX_URLS: Record<SfxBufferKey, string> = {
+  engine: "./audio/engine_loop.ogg",
+  wind: "./audio/wind_loop.ogg",
+  skid: "./audio/skid_loop.ogg",
+  boost: "./audio/boost_whoosh.ogg",
+  impact: "./audio/impact_crash.ogg",
+  wreck: "./audio/wreck_shatter.ogg",
+};
+
 export class AudioEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -5,19 +38,31 @@ export class AudioEngine {
   private sfxGain: GainNode | null = null;
   private timeFilter: BiquadFilterNode | null = null;
 
-  private engineOsc1: OscillatorNode | null = null;
-  private engineOsc2: OscillatorNode | null = null;
-  private engineGain: GainNode | null = null;
-  private nitroGain: GainNode | null = null;
-  private sirenGain: GainNode | null = null;
-  private sirenOsc: OscillatorNode | null = null;
+  private radioEl: HTMLAudioElement | null = null;
+  private radioSourceConnected = false;
+  private stationIndex = 0;
+  private userLockedStation = false;
 
+  private engineSubOsc: OscillatorNode | null = null;
+  private engineSubGain: GainNode | null = null;
+  private engineLoopSrc: AudioBufferSourceNode | null = null;
+  private engineLoopGain: GainNode | null = null;
+  private windLoopSrc: AudioBufferSourceNode | null = null;
+  private windLoopGain: GainNode | null = null;
+  private skidLoopSrc: AudioBufferSourceNode | null = null;
+  private skidLoopGain: GainNode | null = null;
+  private sirenGain: GainNode | null = null;
+  private sirenOsc1: OscillatorNode | null = null;
+  private sirenOsc2: OscillatorNode | null = null;
+
+  private sfxBuffers: Partial<Record<SfxBufferKey, AudioBuffer>> = {};
+  private preloadPromise: Promise<void> | null = null;
+  private decodeStarted = false;
+  private buffersLoaded = 0;
   private noiseBuf: AudioBuffer | null = null;
-  private musicTimer: number | null = null;
-  private musicStep = 0;
   private musicPlaying = false;
-  private stageRootHz = 73.42;
-  private stageBpm = 142;
+  private lastNitroActive = false;
+  private externalSkidIntensity = 0;
 
   private musicVol = 0.55;
   private sfxVol = 0.85;
@@ -25,7 +70,9 @@ export class AudioEngine {
 
   public unlock(): void {
     if (!this.ctx) {
-      const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AC =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AC) return;
       this.ctx = new AC();
       this.masterGain = this.ctx.createGain();
@@ -43,11 +90,18 @@ export class AudioEngine {
       this.masterGain.connect(this.ctx.destination);
 
       this.buildNoiseBuffer();
-      this.initContinuousSynths();
+      this.initContinuousNodes();
+      this.ensureRadioElement();
       this.applyVolumes();
+      this.attachPreloadedBuffers();
+    } else if (this.ctx && !this.decodeStarted) {
+      this.attachPreloadedBuffers();
     }
     if (this.ctx && this.ctx.state === "suspended") {
       this.ctx.resume().catch(() => {});
+    }
+    if (this.musicPlaying && this.radioEl && this.radioEl.paused) {
+      this.radioEl.play().catch(() => {});
     }
   }
 
@@ -60,57 +114,151 @@ export class AudioEngine {
     this.noiseBuf = buf;
   }
 
-  private initContinuousSynths(): void {
+  private ensureRadioElement(): void {
+    if (!this.radioEl) {
+      const el = document.createElement("audio");
+      el.loop = true;
+      el.preload = "auto";
+      el.crossOrigin = "anonymous";
+      el.src = RADIO_STATIONS[this.stationIndex].url;
+      this.radioEl = el;
+    }
+    if (this.ctx && this.musicGain && this.radioEl && !this.radioSourceConnected) {
+      try {
+        const srcNode = this.ctx.createMediaElementSource(this.radioEl);
+        srcNode.connect(this.musicGain);
+        this.radioSourceConnected = true;
+      } catch {
+        this.radioSourceConnected = false;
+      }
+    }
+  }
+
+  private initContinuousNodes(): void {
     if (!this.ctx || !this.sfxGain) return;
 
-    // Dual-oscillator superbike inline-4 engine
-    this.engineGain = this.ctx.createGain();
-    this.engineGain.gain.value = 0;
-    const engineFilter = this.ctx.createBiquadFilter();
-    engineFilter.type = "lowpass";
-    engineFilter.frequency.value = 460;
+    // Warm sub-octave growl reinforcing the sampled engine loop
+    this.engineSubGain = this.ctx.createGain();
+    this.engineSubGain.gain.value = 0;
+    const subFilter = this.ctx.createBiquadFilter();
+    subFilter.type = "lowpass";
+    subFilter.frequency.value = 260;
+    this.engineSubOsc = this.ctx.createOscillator();
+    this.engineSubOsc.type = "sawtooth";
+    this.engineSubOsc.frequency.value = 55;
+    this.engineSubOsc.connect(subFilter);
+    subFilter.connect(this.engineSubGain);
+    this.engineSubGain.connect(this.sfxGain);
+    this.engineSubOsc.start();
 
-    this.engineOsc1 = this.ctx.createOscillator();
-    this.engineOsc1.type = "sawtooth";
-    this.engineOsc1.frequency.value = 65;
+    this.engineLoopGain = this.ctx.createGain();
+    this.engineLoopGain.gain.value = 0;
+    this.engineLoopGain.connect(this.sfxGain);
 
-    this.engineOsc2 = this.ctx.createOscillator();
-    this.engineOsc2.type = "square";
-    this.engineOsc2.frequency.value = 130.5;
+    this.windLoopGain = this.ctx.createGain();
+    this.windLoopGain.gain.value = 0;
+    this.windLoopGain.connect(this.sfxGain);
 
-    this.engineOsc1.connect(engineFilter);
-    this.engineOsc2.connect(engineFilter);
-    engineFilter.connect(this.engineGain);
-    this.engineGain.connect(this.sfxGain);
-    this.engineOsc1.start();
-    this.engineOsc2.start();
+    this.skidLoopGain = this.ctx.createGain();
+    this.skidLoopGain.gain.value = 0;
+    this.skidLoopGain.connect(this.sfxGain);
 
-    // Nitro turbine shimmer
-    this.nitroGain = this.ctx.createGain();
-    this.nitroGain.gain.value = 0;
-    if (this.noiseBuf) {
-      const nSrc = this.ctx.createBufferSource();
-      nSrc.buffer = this.noiseBuf;
-      nSrc.loop = true;
-      const bp = this.ctx.createBiquadFilter();
-      bp.type = "bandpass";
-      bp.frequency.value = 1800;
-      bp.Q.value = 2.4;
-      nSrc.connect(bp);
-      bp.connect(this.nitroGain);
-      this.nitroGain.connect(this.sfxGain);
-      nSrc.start();
-    }
-
-    // Interceptor Police Siren
+    // Dual-harmonic European/US Interceptor Police Siren
     this.sirenGain = this.ctx.createGain();
     this.sirenGain.gain.value = 0;
-    this.sirenOsc = this.ctx.createOscillator();
-    this.sirenOsc.type = "triangle";
-    this.sirenOsc.frequency.value = 640;
-    this.sirenOsc.connect(this.sirenGain);
+    this.sirenOsc1 = this.ctx.createOscillator();
+    this.sirenOsc2 = this.ctx.createOscillator();
+    this.sirenOsc1.type = "triangle";
+    this.sirenOsc2.type = "sine";
+    this.sirenOsc1.frequency.value = 660;
+    this.sirenOsc2.frequency.value = 792;
+    this.sirenOsc1.connect(this.sirenGain);
+    this.sirenOsc2.connect(this.sirenGain);
     this.sirenGain.connect(this.sfxGain);
-    this.sirenOsc.start();
+    this.sirenOsc1.start();
+    this.sirenOsc2.start();
+  }
+
+  public preload(): Promise<void> {
+    if (this.preloadPromise) return this.preloadPromise;
+    this.preloadPromise = (async () => {
+      const OAC =
+        window.OfflineAudioContext ||
+        (window as unknown as { webkitOfflineAudioContext?: typeof OfflineAudioContext }).webkitOfflineAudioContext;
+      const decoderCtx: BaseAudioContext | null = this.ctx || (OAC ? new OAC(2, 44100, 44100) : null);
+      if (!decoderCtx) return;
+
+      await Promise.all(
+        (Object.keys(SFX_URLS) as SfxBufferKey[]).map(async (key) => {
+          try {
+            const res = await fetch(SFX_URLS[key]);
+            if (!res.ok) return;
+            const arr = await res.arrayBuffer();
+            const decoded = await decoderCtx.decodeAudioData(arr.slice(0));
+            if (!this.sfxBuffers[key]) {
+              this.sfxBuffers[key] = decoded;
+              this.buffersLoaded++;
+            }
+            if (this.ctx) {
+              this.attachContinuousBuffer(key, decoded);
+            }
+          } catch {
+            // Ignore network/decode issues cleanly
+          }
+        })
+      );
+    })();
+    return this.preloadPromise;
+  }
+
+  private attachPreloadedBuffers(): void {
+    this.preload();
+    if (!this.ctx || this.decodeStarted) return;
+    this.decodeStarted = true;
+    (Object.keys(this.sfxBuffers) as SfxBufferKey[]).forEach((key) => {
+      const buf = this.sfxBuffers[key];
+      if (buf) this.attachContinuousBuffer(key, buf);
+    });
+  }
+
+  private attachContinuousBuffer(key: SfxBufferKey, buffer: AudioBuffer): void {
+    if (!this.ctx) return;
+    if (key === "engine" && this.engineLoopGain && !this.engineLoopSrc) {
+      const s = this.ctx.createBufferSource();
+      s.buffer = buffer;
+      s.loop = true;
+      s.connect(this.engineLoopGain);
+      s.start();
+      this.engineLoopSrc = s;
+    } else if (key === "wind" && this.windLoopGain && !this.windLoopSrc) {
+      const s = this.ctx.createBufferSource();
+      s.buffer = buffer;
+      s.loop = true;
+      s.connect(this.windLoopGain);
+      s.start();
+      this.windLoopSrc = s;
+    } else if (key === "skid" && this.skidLoopGain && !this.skidLoopSrc) {
+      const s = this.ctx.createBufferSource();
+      s.buffer = buffer;
+      s.loop = true;
+      s.connect(this.skidLoopGain);
+      s.start();
+      this.skidLoopSrc = s;
+    }
+  }
+
+  private playOneShotBuffer(key: SfxBufferKey, gainVal: number, rate = 1.0): boolean {
+    const buf = this.sfxBuffers[key];
+    if (!this.ctx || this.ctx.state !== "running" || !this.sfxGain || !buf) return false;
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = rate;
+    const g = this.ctx.createGain();
+    g.gain.value = gainVal;
+    src.connect(g);
+    g.connect(this.sfxGain);
+    src.start();
+    return true;
   }
 
   public setVolumes(music: number, sfx: number, muted: boolean): void {
@@ -121,11 +269,22 @@ export class AudioEngine {
   }
 
   private applyVolumes(): void {
+    if (this.radioEl) {
+      if (this.radioSourceConnected) {
+        this.radioEl.volume = 1.0;
+      } else {
+        this.radioEl.volume = this.muted ? 0 : Math.min(1, this.musicVol * 0.55);
+      }
+    }
     if (!this.ctx || !this.masterGain || !this.musicGain || !this.sfxGain) return;
     const t = this.ctx.currentTime;
     this.masterGain.gain.setTargetAtTime(this.muted ? 0 : 1, t, 0.03);
-    this.musicGain.gain.setTargetAtTime(this.musicVol * 0.42, t, 0.04);
-    this.sfxGain.gain.setTargetAtTime(this.sfxVol * 0.65, t, 0.04);
+    this.musicGain.gain.setTargetAtTime(this.musicVol * 0.44, t, 0.05);
+    this.sfxGain.gain.setTargetAtTime(this.sfxVol * 0.72, t, 0.04);
+  }
+
+  public setSkidIntensity(intensity: number): void {
+    this.externalSkidIntensity = Math.max(this.externalSkidIntensity, Math.min(1, intensity));
   }
 
   public updateTelemetry(
@@ -140,124 +299,119 @@ export class AudioEngine {
 
     if (this.timeFilter) {
       const cutoff = 18000 * (1 - bulletTime * 0.88);
-      this.timeFilter.frequency.setTargetAtTime(Math.max(950, cutoff), t, 0.05);
+      this.timeFilter.frequency.setTargetAtTime(Math.max(920, cutoff), t, 0.05);
     }
 
-    if (this.engineGain && this.engineOsc1 && this.engineOsc2) {
+    // 6-speed gearbox curve with upshift rev dip
+    const gearSpan = 34;
+    const gearNum = Math.min(5, Math.floor(speedMph / gearSpan));
+    const speedInGear = (speedMph % gearSpan) / gearSpan;
+    const rate = 0.78 + gearNum * 0.14 + speedInGear * 0.58 + (isNitro ? 0.25 : 0) - bulletTime * 0.35;
+
+    if (this.engineLoopSrc && this.engineLoopGain) {
       if (!active) {
-        this.engineGain.gain.setTargetAtTime(0, t, 0.08);
+        this.engineLoopGain.gain.setTargetAtTime(0, t, 0.08);
       } else {
-        // 6-speed gearbox sawtooth pitch curve
-        const gearSpan = 42;
-        const speedInGear = (speedMph % gearSpan) / gearSpan;
-        const baseHz = 54 + speedInGear * 112 + (isNitro ? 34 : 0) - bulletTime * 35;
-        this.engineOsc1.frequency.setTargetAtTime(baseHz, t, 0.03);
-        this.engineOsc2.frequency.setTargetAtTime(baseHz * 2.01, t, 0.03);
-        this.engineGain.gain.setTargetAtTime(0.065 + Math.min(0.08, speedMph * 0.0004), t, 0.04);
+        this.engineLoopSrc.playbackRate.setTargetAtTime(Math.max(0.5, rate), t, 0.035);
+        this.engineLoopGain.gain.setTargetAtTime(0.18 + Math.min(0.22, speedMph * 0.0014), t, 0.05);
       }
     }
 
-    if (this.nitroGain) {
-      this.nitroGain.gain.setTargetAtTime(active && isNitro ? 0.14 : 0, t, 0.04);
+    if (this.engineSubGain && this.engineSubOsc) {
+      if (!active) {
+        this.engineSubGain.gain.setTargetAtTime(0, t, 0.08);
+      } else {
+        const baseHz = 46 + speedInGear * 84 + gearNum * 12 + (isNitro ? 24 : 0) - bulletTime * 24;
+        this.engineSubOsc.frequency.setTargetAtTime(baseHz, t, 0.03);
+        const subLevel = this.engineLoopSrc ? 0.028 : 0.075;
+        this.engineSubGain.gain.setTargetAtTime(subLevel + Math.min(0.05, speedMph * 0.00025), t, 0.05);
+      }
     }
 
-    if (this.sirenGain && this.sirenOsc) {
-      const warble = 620 + Math.sin(t * 7.5) * 210;
-      this.sirenOsc.frequency.setTargetAtTime(warble, t, 0.02);
-      this.sirenGain.gain.setTargetAtTime(active ? sirenStrength * 0.08 : 0, t, 0.08);
+    // Aerodynamic wind rush scaling steeply past 65 MPH
+    if (this.windLoopGain && this.windLoopSrc) {
+      const windLevel = active ? Math.max(0, Math.min(0.24, (speedMph - 55) * 0.0018)) : 0;
+      this.windLoopSrc.playbackRate.setTargetAtTime(0.85 + Math.min(0.65, speedMph * 0.003), t, 0.06);
+      this.windLoopGain.gain.setTargetAtTime(windLevel, t, 0.07);
+    }
+
+    // Trigger real recorded turbo/nitro ignition burst on engagement edge
+    if (active && isNitro && !this.lastNitroActive) {
+      this.playOneShotBuffer("boost", 0.38, 1.05);
+    }
+    this.lastNitroActive = active && isNitro;
+
+    // Tire skid loop decays naturally unless driven by braking / car collision lockups
+    if (this.skidLoopGain) {
+      const targetSkid = active ? this.externalSkidIntensity * 0.28 : 0;
+      this.skidLoopGain.gain.setTargetAtTime(targetSkid, t, 0.04);
+    }
+    this.externalSkidIntensity = Math.max(0, this.externalSkidIntensity - 0.08);
+
+    // Realistic Wail / Yelp Interceptor Siren
+    if (this.sirenGain && this.sirenOsc1 && this.sirenOsc2) {
+      const wail = 650 + Math.sin(t * 7.2) * 230;
+      this.sirenOsc1.frequency.setTargetAtTime(wail, t, 0.02);
+      this.sirenOsc2.frequency.setTargetAtTime(wail * 1.24, t, 0.02);
+      this.sirenGain.gain.setTargetAtTime(active ? sirenStrength * 0.065 : 0, t, 0.08);
     }
   }
 
-  public startMusic(rootHz: number, bpm: number): void {
-    this.stageRootHz = rootHz;
-    this.stageBpm = bpm;
-    if (this.musicPlaying) return;
+  public startMusic(_rootHz?: number, _bpm?: number, biome?: string): void {
     this.musicPlaying = true;
-    this.musicStep = 0;
-
-    const tick = () => {
-      if (!this.musicPlaying) return;
-      this.playMusicStep();
-      const stepMs = (60 / this.stageBpm / 4) * 1000;
-      this.musicTimer = window.setTimeout(tick, stepMs);
-    };
-    tick();
+    this.unlock();
+    if (!this.userLockedStation && biome) {
+      if (biome === "vice") this.stationIndex = 0;
+      else if (biome === "kowloon") this.stationIndex = 1;
+      else if (biome === "dubai") this.stationIndex = 2;
+      else this.stationIndex = 3;
+    }
+    this.ensureRadioElement();
+    if (this.radioEl) {
+      const targetUrl = new URL(RADIO_STATIONS[this.stationIndex].url, window.location.href).href;
+      if (this.radioEl.src !== targetUrl) {
+        this.radioEl.src = RADIO_STATIONS[this.stationIndex].url;
+        this.radioEl.currentTime = 0;
+      }
+      this.radioEl.play().catch(() => {});
+    }
   }
 
   public stopMusic(): void {
     this.musicPlaying = false;
-    if (this.musicTimer !== null) {
-      clearTimeout(this.musicTimer);
-      this.musicTimer = null;
+    if (this.radioEl) {
+      this.radioEl.pause();
     }
   }
 
-  private playMusicStep(): void {
-    if (!this.ctx || this.ctx.state !== "running" || !this.musicGain) return;
-    const t = this.ctx.currentTime;
-    const step = this.musicStep % 16;
-    const bar = Math.floor(this.musicStep / 16) % 4;
-    this.musicStep++;
-
-    // Kick on 0, 4, 8, 12 (+ push on 14)
-    if (step % 4 === 0 || step === 14) {
-      const o = this.ctx.createOscillator();
-      const g = this.ctx.createGain();
-      o.type = "sine";
-      o.frequency.setValueAtTime(145, t);
-      o.frequency.exponentialRampToValueAtTime(38, t + 0.11);
-      g.gain.setValueAtTime(0.45, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
-      o.connect(g);
-      g.connect(this.musicGain);
-      o.start(t);
-      o.stop(t + 0.15);
+  public cycleRadioStation(): string {
+    this.userLockedStation = true;
+    this.stationIndex = (this.stationIndex + 1) % RADIO_STATIONS.length;
+    this.unlock();
+    this.ensureRadioElement();
+    if (this.radioEl) {
+      this.radioEl.src = RADIO_STATIONS[this.stationIndex].url;
+      this.radioEl.currentTime = 0;
+      if (this.musicPlaying) {
+        this.radioEl.play().catch(() => {});
+      }
     }
+    return RADIO_STATIONS[this.stationIndex].name;
+  }
 
-    // Crisp industrial snare on 4 and 12
-    if (step === 4 || step === 12) {
-      this.triggerNoiseHit(0.11, 2200, 0.25, this.musicGain);
-    } else if (step % 2 === 1) {
-      // 16th hi-hat drive
-      this.triggerNoiseHit(0.03, 7500, 0.08, this.musicGain);
-    }
+  public getStationName(): string {
+    return RADIO_STATIONS[this.stationIndex].name;
+  }
 
-    // Dark cyberpunk octave bassline
-    const chordOffsets = [0, 3, -2, -4];
-    const semi = chordOffsets[bar];
-    const noteHz = this.stageRootHz * Math.pow(2, semi / 12) * (step % 2 === 1 ? 2 : 1);
-    const bass = this.ctx.createOscillator();
-    const bassF = this.ctx.createBiquadFilter();
-    const bassG = this.ctx.createGain();
-    bass.type = "sawtooth";
-    bass.frequency.setValueAtTime(noteHz, t);
-    bassF.type = "lowpass";
-    bassF.frequency.setValueAtTime(720, t);
-    bassF.frequency.exponentialRampToValueAtTime(190, t + 0.1);
-    bassG.gain.setValueAtTime(0.22, t);
-    bassG.gain.exponentialRampToValueAtTime(0.001, t + 0.11);
-    bass.connect(bassF);
-    bassF.connect(bassG);
-    bassG.connect(this.musicGain);
-    bass.start(t);
-    bass.stop(t + 0.12);
-
-    // Acid synth stab accents
-    if (step === 0 || step === 6 || step === 10 || step === 15) {
-      const leadPattern = [0, 7, 10, 12];
-      const lSemi = semi + leadPattern[step % leadPattern.length];
-      const leadHz = this.stageRootHz * 4 * Math.pow(2, lSemi / 12);
-      const lOsc = this.ctx.createOscillator();
-      const lG = this.ctx.createGain();
-      lOsc.type = "square";
-      lOsc.frequency.setValueAtTime(leadHz, t);
-      lG.gain.setValueAtTime(0.09, t);
-      lG.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
-      lOsc.connect(lG);
-      lG.connect(this.musicGain);
-      lOsc.start(t);
-      lOsc.stop(t + 0.19);
-    }
+  public getDiagnostics(): AudioDiagnostics {
+    return {
+      unlocked: Boolean(this.ctx),
+      state: this.ctx ? this.ctx.state : "uninitialized",
+      stationName: RADIO_STATIONS[this.stationIndex].name,
+      stationIndex: this.stationIndex,
+      musicPlaying: this.musicPlaying,
+      buffersLoaded: this.buffersLoaded,
+    };
   }
 
   private triggerNoiseHit(dur: number, hpFreq: number, gain: number, dest: AudioNode): void {
@@ -280,6 +434,9 @@ export class AudioEngine {
 
   public playStrike(heavy = false): void {
     if (!this.ctx || this.ctx.state !== "running" || !this.sfxGain) return;
+    if (this.playOneShotBuffer("impact", heavy ? 0.58 : 0.36, heavy ? 0.92 : 1.15)) {
+      return;
+    }
     const t = this.ctx.currentTime;
     this.triggerNoiseHit(0.09, heavy ? 600 : 1200, heavy ? 0.5 : 0.35, this.sfxGain);
     const o = this.ctx.createOscillator();
@@ -297,47 +454,76 @@ export class AudioEngine {
 
   public playEmpBlast(): void {
     if (!this.ctx || this.ctx.state !== "running" || !this.sfxGain) return;
+    this.playOneShotBuffer("boost", 0.55, 0.72);
     const t = this.ctx.currentTime;
     const o = this.ctx.createOscillator();
     const g = this.ctx.createGain();
     o.type = "sawtooth";
-    o.frequency.setValueAtTime(620, t);
+    o.frequency.setValueAtTime(520, t);
     o.frequency.exponentialRampToValueAtTime(34, t + 0.55);
-    g.gain.setValueAtTime(0.55, t);
+    g.gain.setValueAtTime(0.35, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
     o.connect(g);
     g.connect(this.sfxGain);
     o.start(t);
     o.stop(t + 0.62);
-    this.triggerNoiseHit(0.28, 2800, 0.35, this.sfxGain);
   }
 
-  public playCrash(): void {
+  public playCrash(heavy = true): void {
     if (!this.ctx || this.ctx.state !== "running" || !this.sfxGain) return;
-    this.triggerNoiseHit(0.55, 220, 0.75, this.sfxGain);
-    const t = this.ctx.currentTime;
-    const o = this.ctx.createOscillator();
-    const g = this.ctx.createGain();
-    o.type = "sawtooth";
-    o.frequency.setValueAtTime(140, t);
-    o.frequency.exponentialRampToValueAtTime(32, t + 0.45);
-    g.gain.setValueAtTime(0.6, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.48);
-    o.connect(g);
-    g.connect(this.sfxGain);
-    o.start(t);
-    o.stop(t + 0.5);
-  }
-
-  public playNearMiss(): void {
-    if (!this.ctx || this.ctx.state !== "running" || !this.sfxGain) return;
+    const playedWreck = heavy && this.playOneShotBuffer("wreck", 0.68, 0.95);
+    const playedImpact = this.playOneShotBuffer("impact", 0.72, 0.85);
+    if (!playedWreck && !playedImpact) {
+      this.triggerNoiseHit(0.55, 220, 0.75, this.sfxGain);
+    }
+    // Deep chassis sub-thump underneath recorded sheet-metal crunch
     const t = this.ctx.currentTime;
     const o = this.ctx.createOscillator();
     const g = this.ctx.createGain();
     o.type = "sine";
-    o.frequency.setValueAtTime(520, t);
-    o.frequency.exponentialRampToValueAtTime(220, t + 0.16);
-    g.gain.setValueAtTime(0.22, t);
+    o.frequency.setValueAtTime(110, t);
+    o.frequency.exponentialRampToValueAtTime(28, t + 0.42);
+    g.gain.setValueAtTime(0.55, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.45);
+    o.connect(g);
+    g.connect(this.sfxGain);
+    o.start(t);
+    o.stop(t + 0.48);
+  }
+
+  public playCarHorn(dopplerPitch = 1.0): void {
+    if (!this.ctx || this.ctx.state !== "running" || !this.sfxGain) return;
+    const t = this.ctx.currentTime;
+    for (const freq of [392, 494]) {
+      const o = this.ctx.createOscillator();
+      const f = this.ctx.createBiquadFilter();
+      const g = this.ctx.createGain();
+      o.type = "sawtooth";
+      o.frequency.setValueAtTime(freq * dopplerPitch, t);
+      o.frequency.exponentialRampToValueAtTime(freq * dopplerPitch * 0.88, t + 0.36);
+      f.type = "bandpass";
+      f.frequency.value = 1150;
+      f.Q.value = 1.4;
+      g.gain.setValueAtTime(0.16, t);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.38);
+      o.connect(f);
+      f.connect(g);
+      g.connect(this.sfxGain);
+      o.start(t);
+      o.stop(t + 0.4);
+    }
+  }
+
+  public playNearMiss(): void {
+    if (!this.ctx || this.ctx.state !== "running" || !this.sfxGain) return;
+    this.playOneShotBuffer("wind", 0.24, 1.55);
+    const t = this.ctx.currentTime;
+    const o = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(480, t);
+    o.frequency.exponentialRampToValueAtTime(210, t + 0.16);
+    g.gain.setValueAtTime(0.14, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
     o.connect(g);
     g.connect(this.sfxGain);

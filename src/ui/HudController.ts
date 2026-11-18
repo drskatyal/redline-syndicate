@@ -100,6 +100,9 @@ export class HudController {
       this.engine.updateAudioSettings(s.musicVolume, Number(this.sfxRange.value), s.muted);
     });
 
+    document.getElementById("hudRadioBtn")!.addEventListener("click", () => {
+      this.engine.cycleRadioStation();
+    });
     document.getElementById("hudCamBtn")!.addEventListener("click", () => {
       this.engine.save.settings.cameraMode = (this.engine.save.settings.cameraMode + 1) % 3;
     });

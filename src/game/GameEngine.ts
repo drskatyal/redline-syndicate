@@ -8,6 +8,7 @@ import {
   createSuperbikeInstance,
   createTrafficVehicleInstance,
   HelicopterVisual,
+  prewarmVehicleTemplates,
   SuperbikeVisual,
   TrafficKind,
   TrafficVisual,
@@ -72,6 +73,11 @@ interface TrafficSim {
   laneX: number; // - = Left, + = Right
   latVel: number;
   yawWobble: number;
+  pitchAngle: number;
+  rollAngle: number;
+  brakeTimer: number;
+  hazardTimer: number;
+  slammedByPlayer: boolean;
   speed: number;
   oncoming: boolean;
   roadblock: boolean;
@@ -202,6 +208,20 @@ export class GameEngine {
   private rafId = 0;
   private initialized = false;
 
+  // Catastrophic Ragdoll Ejection & Crash Choreography state
+  private ragdollGroup: THREE.Group | null = null;
+  private ragdollActive = false;
+  private ragdollPos = new THREE.Vector3();
+  private ragdollVel = new THREE.Vector3();
+  private ragdollSpin = new THREE.Vector3();
+  private ragdollElapsed = 0;
+  private bikeSpinYaw = 0;
+  private bikeSpinRate = 0;
+  private postCrashGhostTimer = 0;
+  private barWobbleTimer = 0;
+  private wreckFocusTimer = 0;
+  private crashSeed = 1;
+
   private tmpProj = new THREE.Vector3();
   private onUiUpdate: (snap: UiSnapshot) => void;
 
@@ -243,9 +263,37 @@ export class GameEngine {
     this.kit = createMaterialKit(this.assets, this.pipeline.getMaxAnisotropy());
     this.track = new TrackSystem(this.kit, this.assets);
     this.vfx = new VfxSystem(this.kit, this.assets);
+    if (loadLabel) loadLabel.textContent = "99% // COMPILING VEHICLE LODS & AUDIO...";
+    await new Promise((r) => setTimeout(r, 16));
+    prewarmVehicleTemplates(this.assets);
+    await this.audio.preload();
 
     this.raceGroup.add(this.track.group);
     this.raceGroup.add(this.vfx.group);
+
+    // Warm up race GLSL shaders & GPU texture uploads behind the loading overlay so frame 1 of DEPLOY runs at 60 FPS!
+    if (loadLabel) loadLabel.textContent = "99% // UPLOADING GPU SHADERS...";
+    await new Promise((r) => setTimeout(r, 16));
+    const warmupGroup = new THREE.Group();
+    const warmupKinds: TrafficKind[] = ["sedan", "muscle", "exotic", "truck", "police"];
+    warmupKinds.forEach((k, idx) => {
+      const v = createTrafficVehicleInstance(this.assets, this.kit, k, idx);
+      v.root.position.set(idx * 4 - 8, 0, 18);
+      warmupGroup.add(v.root);
+    });
+    const warmupHeli = createPursuitHelicopterInstance(this.assets);
+    warmupHeli.root.position.set(0, 16, 26);
+    warmupGroup.add(warmupHeli.root);
+    this.raceGroup.add(warmupGroup);
+
+    this.pipeline.applyStageAtmosphere(this.activeStage);
+    this.track.configureStage(this.activeStage);
+    this.track.update(20, 0);
+    this.raceGroup.visible = true;
+    this.hangarGroup.visible = false;
+    this.pipeline.renderer.compile(this.pipeline.scene, this.pipeline.camera);
+    this.pipeline.render();
+    this.raceGroup.remove(warmupGroup);
 
     this.buildHangarShowroom();
     this.enterHangarScene(this.save.selectedStageId);
@@ -290,7 +338,7 @@ export class GameEngine {
     const aHex = this.save.customAccentHex ?? spec.accentHex;
 
     this.hangarBike = createSuperbikeInstance(this.assets, this.kit, spec, pHex, aHex, true);
-    this.hangarRider = createArmoredRiderInstance(this.assets, 0x181c26, aHex, "katana");
+    this.hangarRider = createArmoredRiderInstance(this.assets, 0x181c26, aHex, "katana", true);
     this.hangarRider.updatePose(0, 0.15, 0, 0, "melee", 0);
     this.hangarBike.chassisPivot.add(this.hangarRider.root);
     this.hangarBike.root.position.set(0, 0, 0);
@@ -303,6 +351,11 @@ export class GameEngine {
 
   private enterHangarScene(stageId: StageId): void {
     if (!this.initialized && !this.assets) return;
+    if (this.ragdollGroup) {
+      this.pipeline.scene.remove(this.ragdollGroup);
+      this.ragdollGroup = null;
+    }
+    this.ragdollActive = false;
     this.activeStage = getStageById(stageId);
     this.hangarGroup.visible = true;
     this.raceGroup.visible = false;
@@ -411,6 +464,17 @@ export class GameEngine {
     this.pipeline.applyStageAtmosphere(this.activeStage);
     this.track.configureStage(this.activeStage);
 
+    if (this.ragdollGroup) {
+      this.pipeline.scene.remove(this.ragdollGroup);
+      this.ragdollGroup = null;
+    }
+    this.ragdollActive = false;
+    this.bikeSpinYaw = 0;
+    this.bikeSpinRate = 0;
+    this.postCrashGhostTimer = 0;
+    this.barWobbleTimer = 0;
+    this.wreckFocusTimer = 0;
+
     for (const r of this.racers) this.raceGroup.remove(r.visual.root);
     for (const t of this.traffic) this.raceGroup.remove(t.visual.root);
     if (this.helicopter) this.raceGroup.remove(this.helicopter.root);
@@ -425,7 +489,7 @@ export class GameEngine {
     const accent = this.save.customAccentHex ?? bikeSpec.accentHex;
 
     const pBike = createSuperbikeInstance(this.assets, this.kit, bikeSpec, primary, accent, true);
-    const pRider = createArmoredRiderInstance(this.assets, 0x161b26, accent, "knuckle");
+    const pRider = createArmoredRiderInstance(this.assets, 0x161b26, accent, "knuckle", true);
     pBike.chassisPivot.add(pRider.root);
     this.raceGroup.add(pBike.root);
 
@@ -516,9 +580,9 @@ export class GameEngine {
       });
     });
 
-    // Commuter Sedan, Muscle Coupe, Exotic & Commercial Freight Traffic Pool
-    const kinds: TrafficKind[] = ["sedan", "sedan", "muscle", "truck", "exotic", "sedan"];
-    const poolCount = Math.min(7, this.activeStage.trafficDensity);
+    // Diverse Real Car Traffic Pool: Tesla Model 3 Sedan, BMW M3 E30 Coupe, Ferrari Exotic, Commercial Truck
+    const kinds: TrafficKind[] = ["sedan", "muscle", "exotic", "truck", "sedan", "muscle"];
+    const poolCount = Math.min(6, this.activeStage.trafficDensity);
     for (let i = 0; i < poolCount; i++) {
       const kind = kinds[i % kinds.length];
       const vis = createTrafficVehicleInstance(this.assets, this.kit, kind, i);
@@ -528,13 +592,18 @@ export class GameEngine {
       this.traffic.push({
         id: i,
         kind,
-        halfWidth: kind === "truck" ? 1.15 : 1.02,
-        halfLength: kind === "truck" ? 3.1 : 2.28,
-        s: 110 + i * 48,
+        halfWidth: kind === "truck" ? 1.15 : kind === "muscle" ? 0.96 : 1.02,
+        halfLength: kind === "truck" ? 3.1 : kind === "muscle" ? 2.18 : 2.34,
+        s: 110 + i * 44,
         distRolled: 0,
         laneX,
         latVel: 0,
         yawWobble: 0,
+        pitchAngle: 0,
+        rollAngle: 0,
+        brakeTimer: 0,
+        hazardTimer: 0,
+        slammedByPlayer: false,
         speed: oncoming ? -(22 + (i % 3) * 4) : 24 + (i % 4) * 3,
         oncoming,
         roadblock: false,
@@ -602,8 +671,15 @@ export class GameEngine {
     );
 
     this.screen = "racing";
-    this.audio.startMusic(this.activeStage.musicRootHz, this.activeStage.musicBpm);
+    this.audio.startMusic(this.activeStage.musicRootHz, this.activeStage.musicBpm, this.activeStage.biome);
     this.emitSnapshot();
+  }
+
+  public cycleRadioStation(): string {
+    const station = this.audio.cycleRadioStation();
+    this.showBanner(`RADIO: ${station}`, 1.6);
+    this.audio.playTone(720, 0.08, 0.16);
+    return station;
   }
 
   public resumeRace(): void {
@@ -650,6 +726,11 @@ export class GameEngine {
       laneX: this.player.laneX > 0 ? -3.4 : 3.4,
       latVel: 0,
       yawWobble: 0,
+      pitchAngle: 0,
+      rollAngle: 0,
+      brakeTimer: 0,
+      hazardTimer: 0,
+      slammedByPlayer: false,
       speed: Math.max(46, this.player.speed * 0.96),
       oncoming: false,
       roadblock: false,
@@ -722,6 +803,11 @@ export class GameEngine {
         laneX: -4.2,
         latVel: 0,
         yawWobble: 0,
+        pitchAngle: 0,
+        rollAngle: 0,
+        brakeTimer: 0,
+        hazardTimer: 0,
+        slammedByPlayer: false,
         speed: 0,
         oncoming: false,
         roadblock: true,
@@ -740,6 +826,11 @@ export class GameEngine {
         laneX: 5.1,
         latVel: 0,
         yawWobble: 0,
+        pitchAngle: 0,
+        rollAngle: 0,
+        brakeTimer: 0,
+        hazardTimer: 0,
+        slammedByPlayer: false,
         speed: 0,
         oncoming: false,
         roadblock: true,
@@ -848,6 +939,9 @@ export class GameEngine {
         const labels = ["CAMERA: STREET CHASE", "CAMERA: CLOSE CHASE", "CAMERA: RIDER POV"];
         this.showBanner(labels[this.save.settings.cameraMode], 1.1);
       }
+      if (intent.radioPressed) {
+        this.cycleRadioStation();
+      }
 
       const focusActive = intent.bulletTime && this.focus > 4 && this.countdownTimer <= 0 && !this.player.crashed;
       if (focusActive) {
@@ -892,6 +986,9 @@ export class GameEngine {
       stamina: Math.round(this.player ? this.player.stamina : 100),
       armor: Math.round(this.player ? this.player.armor : 100),
       cash: this.save.cash,
+      ragdollActive: this.ragdollActive,
+      activeTrafficKinds: Array.from(new Set(this.traffic.filter((t) => t.disabledTimer <= 0).map((t) => t.kind))),
+      audioDiagnostics: this.audio.getDiagnostics(),
     });
 
     this.emitSnapshot();
@@ -953,6 +1050,10 @@ export class GameEngine {
     const gripMul = 1 + (this.save.upgrades.grip || 0) * 0.09;
     const capMul = 1 + (this.save.upgrades.capacitor || 0) * 0.22;
 
+    if (this.postCrashGhostTimer > 0) this.postCrashGhostTimer = Math.max(0, this.postCrashGhostTimer - rawDt);
+    if (this.barWobbleTimer > 0) this.barWobbleTimer = Math.max(0, this.barWobbleTimer - rawDt);
+    if (this.wreckFocusTimer > 0) this.wreckFocusTimer = Math.max(0, this.wreckFocusTimer - rawDt);
+
     const p = this.player;
     const baseMaxMps = bikeSpec.topSpeedMph * turbineMul * 0.44704;
     const nitroActive = intent.nitro && this.nitro > 1 && !p.crashed && (intent.throttle || p.speed > 18);
@@ -966,22 +1067,65 @@ export class GameEngine {
     const maxSpeed = nitroActive ? baseMaxMps * 1.24 : baseMaxMps;
     if (p.crashed) {
       p.crashTimer -= rawDt;
-      p.speed = Math.max(0, p.speed - 36 * rawDt);
+      p.speed = Math.max(0, p.speed - 28 * dt);
       p.laneX = Math.max(-SHOULDER_LIMIT, Math.min(SHOULDER_LIMIT, p.laneX + p.vx * dt));
-      p.vx *= Math.exp(-3.6 * dt);
+      p.vx *= Math.exp(-3.0 * dt);
       p.pitchOffset += (0 - p.pitchOffset) * (1 - Math.exp(-8 * rawDt));
-      if (p.speed > 8 && Math.random() < 0.55) {
+      this.bikeSpinYaw += this.bikeSpinRate * dt;
+      this.bikeSpinRate *= Math.exp(-1.9 * dt);
+      this.audio.setSkidIntensity(p.speed > 12 ? 0.55 : 0);
+
+      if (this.ragdollActive && this.ragdollGroup) {
+        this.ragdollElapsed += dt;
+        this.ragdollVel.y -= 23.5 * dt;
+        this.ragdollPos.addScaledVector(this.ragdollVel, dt);
+        const ragGroundY = this.track.sample(p.s + 3.0).y + 0.14;
+        if (this.ragdollPos.y <= ragGroundY) {
+          this.ragdollPos.y = ragGroundY;
+          if (this.ragdollVel.y < -2.4) {
+            this.ragdollVel.y = -this.ragdollVel.y * 0.36;
+            this.ragdollVel.multiplyScalar(0.72);
+            this.vfx.spawnBurst(this.ragdollPos.x, ragGroundY + 0.1, this.ragdollPos.z, 0xfbbf24, 6, 7, 0.7);
+          } else {
+            this.ragdollVel.y = 0;
+            this.ragdollVel.x *= Math.exp(-3.8 * dt);
+            this.ragdollVel.z *= Math.exp(-3.8 * dt);
+            this.ragdollSpin.multiplyScalar(Math.exp(-2.8 * dt));
+          }
+        }
+        this.ragdollGroup.position.copy(this.ragdollPos);
+        this.ragdollGroup.rotation.x += this.ragdollSpin.x * dt;
+        this.ragdollGroup.rotation.y += this.ragdollSpin.y * dt;
+        this.ragdollGroup.rotation.z += this.ragdollSpin.z * dt;
+        p.rider.setRagdollPose(this.ragdollElapsed, this.crashSeed);
+      }
+
+      if (p.speed > 7 && Math.random() < 0.72) {
         const wCrash = this.track.toWorld(p.s, p.laneX);
-        this.vfx.spawnBurst(wCrash.x, wCrash.y + 0.12, wCrash.z, 0xffaa00, 3, 7, 0.7);
-        this.vfx.spawnSmoke(wCrash.x, wCrash.y + 0.25, wCrash.z, 2, 1.0);
+        this.vfx.spawnBurst(wCrash.x, wCrash.y + 0.12, wCrash.z, 0xffaa00, 4, 8, 0.8);
+        this.vfx.spawnSmoke(wCrash.x, wCrash.y + 0.25, wCrash.z, 2, 1.15);
       }
       if (p.crashTimer <= 0) {
         p.crashed = false;
         p.stamina = p.maxStamina;
-        p.speed = 22;
+        p.speed = 28;
         p.vx = 0;
         p.lean = 0;
         p.laneX = Math.max(-5.5, Math.min(5.5, p.laneX));
+        this.postCrashGhostTimer = 2.2;
+        this.bikeSpinYaw = 0;
+        this.bikeSpinRate = 0;
+        this.wreckFocusTimer = 0;
+        if (this.ragdollActive) {
+          this.ragdollActive = false;
+          p.rider.root.position.set(0, 0, 0);
+          p.rider.root.rotation.set(0, 0, 0);
+          p.visual.chassisPivot.add(p.rider.root);
+          if (this.ragdollGroup) {
+            this.pipeline.scene.remove(this.ragdollGroup);
+            this.ragdollGroup = null;
+          }
+        }
         this.showBanner("BACK ON THE GAS!", 1.2);
       }
     } else {
@@ -996,13 +1140,18 @@ export class GameEngine {
       const aeroDrag = p.speed * p.speed * 0.0018;
       const offroadPenalty = Math.abs(p.laneX) > PLAYABLE_HALF_WIDTH ? 0.8 : 1.0;
 
+      if (intent.brake && p.speed > 20) {
+        this.audio.setSkidIntensity(0.45);
+      }
+
       p.speed = Math.max(
         0,
         Math.min(maxSpeed * offroadPenalty, p.speed + (accelPush - brakePull - engineBrake - aeroDrag) * dt)
       );
 
-      // Weight-transfer chassis squat/dive
-      const targetPitch = intent.brake ? 0.075 : accelPush > 15 ? -0.055 : 0;
+      // Weight-transfer chassis squat, braking nose-dive, and subtle nitro launch wheelie lift
+      const wheelieLift = nitroActive && p.speed > 18 && p.speed < 72 ? -0.14 * (1 - p.speed / 82) : 0;
+      const targetPitch = intent.brake ? 0.075 : accelPush > 15 ? -0.055 + wheelieLift : 0;
       p.pitchOffset += (targetPitch - p.pitchOffset) * (1 - Math.exp(-10 * rawDt));
 
       // Real human steering & centrifugal curve physics (no bot auto-tracking around corners!)
@@ -1128,14 +1277,22 @@ export class GameEngine {
       }
     }
 
-    // Traffic & Realistic Physical Car Collisions (side-swipes push cars & scrape; direct slams jolt vehicles & lowside bike)
+    // Traffic & Realistic Physical Car Collisions + Chain-Reaction Traffic Slam Takedowns
     for (const t of this.traffic) {
       if (t.disabledTimer > 0) t.disabledTimer = Math.max(0, t.disabledTimer - dt);
+      if (t.brakeTimer > 0) t.brakeTimer = Math.max(0, t.brakeTimer - dt);
+      if (t.hazardTimer > 0) t.hazardTimer = Math.max(0, t.hazardTimer - dt);
       const prevCarS = t.s;
 
       t.laneX = Math.max(-PLAYABLE_HALF_WIDTH, Math.min(PLAYABLE_HALF_WIDTH, t.laneX + t.latVel * dt));
-      t.latVel *= Math.exp(-4.5 * dt);
-      t.yawWobble *= Math.exp(-5.8 * dt);
+      t.latVel *= Math.exp(-4.2 * dt);
+      t.yawWobble *= Math.exp(-5.0 * dt);
+      t.pitchAngle *= Math.exp(-5.5 * dt);
+      t.rollAngle *= Math.exp(-5.2 * dt);
+
+      if (t.brakeTimer > 0 && !t.roadblock) {
+        t.speed *= Math.exp(-1.8 * dt);
+      }
 
       if (t.kind === "police" && !t.roadblock) {
         if (t.disabledTimer <= 0) {
@@ -1150,10 +1307,13 @@ export class GameEngine {
           if (!p.crashed && p.attackTimer > 0 && Math.abs(p.s - t.s) < 3.2 && Math.abs(p.laneX - t.laneX) < 3.0) {
             const pitSide = Math.sign(t.laneX - p.laneX || p.attackSide || 1);
             t.hp -= 55;
-            t.latVel = pitSide * 7.5;
+            t.latVel = pitSide * 7.8;
             t.yawWobble = pitSide * 0.34;
+            t.rollAngle = -pitSide * 0.16;
+            t.hazardTimer = 3.0;
             const wCop = this.track.toWorld(t.s, t.laneX);
             this.vfx.spawnBurst(wCop.x, wCop.y + 0.6, wCop.z, 0xffaa00, 18, 11, 1.0);
+            this.vfx.spawnDebrisBurst(wCop.x, wCop.y + 0.6, wCop.z, 0, t.speed * 0.4, 0xf8fafc, 10, wCop.y);
             this.vfx.spawnSmoke(wCop.x, wCop.y + 0.3, wCop.z, 3, 1.0);
             if (t.hp <= 0) {
               t.disabledTimer = 10;
@@ -1175,11 +1335,58 @@ export class GameEngine {
           t.nearMissed = false;
           t.latVel = 0;
           t.yawWobble = 0;
+          t.pitchAngle = 0;
+          t.rollAngle = 0;
+          t.brakeTimer = 0;
+          t.hazardTimer = 0;
+          t.slammedByPlayer = false;
+          t.speed = t.oncoming ? -(22 + (t.id % 3) * 4) : 24 + (t.id % 4) * 3;
         } else if (t.s > p.s + 420) {
           t.s = p.s + 240 + Math.random() * 140;
           t.nearMissed = false;
           t.latVel = 0;
           t.yawWobble = 0;
+          t.pitchAngle = 0;
+          t.rollAngle = 0;
+          t.brakeTimer = 0;
+          t.hazardTimer = 0;
+          t.slammedByPlayer = false;
+        }
+
+        // Player Kick/Strike alongside any civilian car shoves it into adjacent lane (enabling chain-reaction Traffic Slams!)
+        if (!p.crashed && p.attackTimer > 0 && !t.slammedByPlayer && Math.abs(p.s - t.s) < t.halfLength + 1.1 && Math.abs(p.laneX - t.laneX) < t.halfWidth + 1.85) {
+          const slamSide = Math.sign(t.laneX - p.laneX || p.attackSide || 1);
+          t.slammedByPlayer = true;
+          t.latVel = slamSide * 7.6;
+          t.yawWobble = slamSide * 0.24;
+          t.rollAngle = -slamSide * 0.18;
+          t.brakeTimer = 1.6;
+          t.hazardTimer = 3.2;
+          const wSlam = this.track.toWorld(t.s, t.laneX);
+          this.vfx.spawnBurst(wSlam.x, wSlam.y + 0.65, wSlam.z, 0xffaa00, 14, 9, 0.9);
+          this.vfx.spawnDebrisBurst(wSlam.x, wSlam.y + 0.65, wSlam.z, slamSide * 4, t.speed * 0.4, t.visual.bodyMat.color.getHex(), 8, wSlam.y);
+          this.audio.playStrike(true);
+          this.audio.playCarHorn(0.95);
+        }
+      }
+
+      // Chain-reaction Rival / Cop slammed into traffic car!
+      if (t.disabledTimer <= 0) {
+        for (const r of this.racers) {
+          if (r.isPlayer || r.crashed || r.yOffset > 1.2) continue;
+          if (Math.abs(r.s - t.s) < t.halfLength + 0.9 && Math.abs(r.laneX - t.laneX) < t.halfWidth + 0.48) {
+            const cSide = Math.sign(r.laneX - t.laneX || 1);
+            t.latVel = -cSide * 5.2;
+            t.rollAngle = cSide * 0.16;
+            t.brakeTimer = 2.0;
+            t.hazardTimer = 3.6;
+            const wSlam = this.track.toWorld(t.s, (r.laneX + t.laneX) * 0.5);
+            this.vfx.spawnDebrisBurst(wSlam.x, wSlam.y + 0.7, wSlam.z, cSide * 5, t.speed * 0.4, t.visual.bodyMat.color.getHex(), 18, wSlam.y);
+            this.knockoutRacer(r, cSide);
+            this.raceCashEarned += 200;
+            this.showBanner(`TRAFFIC SLAM TAKEDOWN! +$650`, 2.2);
+            break;
+          }
         }
       }
 
@@ -1195,39 +1402,44 @@ export class GameEngine {
           this.nitro = Math.min(this.maxNitro, this.nitro + 12);
           this.focus = Math.min(this.maxFocus, this.focus + 10);
           this.audio.playNearMiss();
+          if (t.oncoming) this.audio.playCarHorn(1.16);
           this.showBanner(`NEAR MISS! x${this.multiplier.toFixed(1)} +$${bonus}`, 1.1);
         }
       }
 
-      if (!p.crashed && t.disabledTimer <= 0 && p.yOffset < 1.35 && Math.abs(p.s - t.s) < t.halfLength + 0.85) {
+      if (!p.crashed && this.postCrashGhostTimer <= 0 && t.disabledTimer <= 0 && p.yOffset < 1.35 && Math.abs(p.s - t.s) < t.halfLength + 0.85) {
         if (Math.abs(p.laneX - t.laneX) < t.halfWidth + 0.42) {
           const hitSide = Math.sign(p.laneX - t.laneX || (p.laneX > 0 ? -1 : 1));
           const relSpeed = Math.abs(p.speed - t.speed);
           const wasAlongside = Math.abs(prevPlayerS - prevCarS) < t.halfLength + 0.35;
           const wHit = this.track.toWorld(p.s, (p.laneX + t.laneX) * 0.5);
 
-          if (wasAlongside || relSpeed < 13) {
-            // Glancing door-scrape / side-swipe: bounce cleanly apart, rock the car, sparks & tire chirp
-            p.laneX = t.laneX + hitSide * (t.halfWidth + 0.48);
-            p.vx = hitSide * 6.8;
-            t.latVel = -hitSide * 3.8;
-            t.yawWobble = -hitSide * 0.16;
+          if (wasAlongside || relSpeed < 12) {
+            // Glancing door-scrape / side-swipe: bounce cleanly apart, rock car suspension, tank-slapper handlebar wobble & debris
+            p.laneX = t.laneX + hitSide * (t.halfWidth + 0.52);
+            p.vx = hitSide * 7.4;
+            this.barWobbleTimer = 0.55;
+            t.latVel = -hitSide * 4.6;
+            t.yawWobble = -hitSide * 0.18;
+            t.rollAngle = hitSide * 0.16;
+            t.hazardTimer = 2.6;
             p.speed *= 0.86;
             p.armor = Math.max(0, p.armor - 6);
-            this.damageFlash = Math.max(this.damageFlash, 0.38);
-            this.vfx.spawnBurst(wHit.x, wHit.y + 0.6, wHit.z, 0xffaa00, 14, 9, 0.85);
-            this.vfx.spawnSmoke(wHit.x, wHit.y + 0.35, wHit.z, 3, 0.9);
-            this.cameraRig.addTrauma(0.28);
+            this.damageFlash = Math.max(this.damageFlash, 0.42);
+            this.vfx.spawnBurst(wHit.x, wHit.y + 0.65, wHit.z, 0xffaa00, 16, 10, 0.9);
+            this.vfx.spawnDebrisBurst(wHit.x, wHit.y + 0.65, wHit.z, hitSide * 4, p.speed * 0.35, t.visual.bodyMat.color.getHex(), 8, wHit.y);
+            this.vfx.spawnSmoke(wHit.x, wHit.y + 0.35, wHit.z, 3, 0.95);
+            this.cameraRig.addTrauma(0.32);
             this.audio.playStrike(true);
-            this.showBanner("GLANCING IMPACT!", 0.9);
+            this.audio.playCarHorn(1.06);
+            this.audio.setSkidIntensity(0.5);
+            this.showBanner("SIDE-SWIPE! HOLD THE BARS!", 1.0);
           } else {
-            // Heavy bumper impact: physically jolt & swerve the struck vehicle, lowside the bike cleanly without fireballs
+            // Catastrophic high-speed car crash: launch ragdoll rider over the car, lock car brakes + 3D debris shatter!
             if (!t.roadblock) {
-              t.speed = Math.max(-28, t.speed + (p.speed - t.speed) * 0.24);
+              t.speed = Math.max(-22, t.speed + (p.speed - t.speed) * 0.26);
             }
-            t.latVel = -hitSide * 4.8;
-            t.yawWobble = -hitSide * 0.26;
-            this.triggerPlayerCrash(hitSide, 22);
+            this.triggerPlayerCrash(hitSide, 22, t);
           }
         }
       }
@@ -1266,6 +1478,10 @@ export class GameEngine {
     const aheadWorld = this.track.toWorld(p.s + 24, p.laneX * 0.45);
     this.vfx.update(rawDt, pWorld.x, pWorld.y, pWorld.z, p.speed, this.activeStage.hasRain);
     this.pipeline.syncFollowRig(pWorld.x, pWorld.y, pWorld.z);
+    const wreckFocus =
+      this.ragdollActive && this.wreckFocusTimer > 0
+        ? { x: this.ragdollPos.x, y: this.ragdollPos.y, z: this.ragdollPos.z, blend: Math.min(1, this.wreckFocusTimer / 1.1) }
+        : undefined;
     this.cameraRig.updateRace(
       this.pipeline.camera,
       rawDt,
@@ -1282,7 +1498,8 @@ export class GameEngine {
       intent.brake,
       p.lean,
       this.save.settings.cameraMode,
-      this.totalElapsed
+      this.totalElapsed,
+      wreckFocus
     );
   }
 
@@ -1458,27 +1675,92 @@ export class GameEngine {
     }
   }
 
-  private triggerPlayerCrash(dir: number, armorDamage: number): void {
+  private triggerPlayerCrash(dir: number, armorDamage: number, hitCar?: TrafficSim): void {
     const p = this.player;
+    const preCrashSpeed = p.speed;
     p.crashed = true;
-    p.crashTimer = 1.9;
-    p.crashDir = dir;
-    p.vx = dir * 4.5;
-    p.speed *= 0.25;
+    p.crashTimer = 2.1;
+    p.crashDir = dir || 1;
+    p.vx = dir * 4.8;
+    p.speed *= 0.34;
     p.armor = Math.max(0, p.armor - armorDamage);
     this.multiplier = 1.0;
     this.damageFlash = 1.0;
-    this.hitstopTimer = 0.04;
-    this.cameraRig.addTrauma(0.75);
-    this.audio.playCrash();
+    this.hitstopTimer = 0.045;
+    this.takedownSlowMo = 0.42;
+    this.crashSeed += 1.37;
+    this.bikeSpinYaw = 0;
+    this.bikeSpinRate = dir * 7.8;
+    this.wreckFocusTimer = 1.65;
+    this.cameraRig.addTrauma(0.85);
+    this.audio.playCrash(true);
 
     const wp = this.track.toWorld(p.s, p.laneX);
-    this.vfx.spawnBurst(wp.x, wp.y + 0.45, wp.z, 0xffaa00, 26, 12, 1.0);
-    this.vfx.spawnSmoke(wp.x, wp.y + 0.4, wp.z, 5, 1.25);
-    this.showBanner(p.armor <= 0 ? "BIKE TOTALED!" : "LOWSIDE! HOLD THE LINE!", 1.8);
+
+    // Eject full-body ragdoll rider cleanly off motorcycle saddle in world coordinates
+    if (!this.ragdollActive) {
+      const worldRiderPos = new THREE.Vector3();
+      p.rider.root.getWorldPosition(worldRiderPos);
+      this.ragdollGroup = new THREE.Group();
+      this.ragdollPos.copy(worldRiderPos);
+      this.ragdollPos.y = Math.max(wp.y + 0.95, this.ragdollPos.y);
+      this.ragdollGroup.position.copy(this.ragdollPos);
+      this.pipeline.scene.add(this.ragdollGroup);
+      p.rider.root.position.set(0, 0, 0);
+      p.rider.root.rotation.set(0, 0, 0);
+      this.ragdollGroup.add(p.rider.root);
+      this.ragdollActive = true;
+      this.ragdollElapsed = 0;
+
+      const fwdX = Math.sin(wp.yaw);
+      const fwdZ = Math.cos(wp.yaw);
+      const rel = hitCar ? Math.abs(preCrashSpeed - hitCar.speed) : preCrashSpeed;
+      const launchSpeed = Math.max(18, preCrashSpeed * 0.65);
+      this.ragdollVel.set(
+        fwdX * launchSpeed + wp.rightX * dir * 3.8,
+        8.4 + Math.min(6.4, rel * 0.16),
+        fwdZ * launchSpeed + wp.rightZ * dir * 3.8
+      );
+      this.ragdollSpin.set(7.8, 4.9 * dir, 6.2 * dir);
+    }
+
+    if (hitCar) {
+      hitCar.latVel = -dir * 5.2;
+      hitCar.yawWobble = -dir * 0.28;
+      hitCar.pitchAngle = 0.12;
+      hitCar.rollAngle = dir * 0.18;
+      hitCar.brakeTimer = 2.2;
+      hitCar.hazardTimer = 4.5;
+      this.audio.playCarHorn(0.92);
+      this.audio.setSkidIntensity(0.95);
+      this.vfx.spawnDebrisBurst(
+        wp.x,
+        wp.y + 0.72,
+        wp.z,
+        wp.rightX * dir * 4,
+        preCrashSpeed * 0.42,
+        hitCar.visual.bodyMat.color.getHex(),
+        24,
+        wp.y
+      );
+    }
+
+    this.vfx.spawnBurst(wp.x, wp.y + 0.55, wp.z, 0xffaa00, 32, 14, 1.15);
+    this.vfx.spawnSmoke(wp.x, wp.y + 0.45, wp.z, 6, 1.45);
+    this.showBanner(p.armor <= 0 ? "BIKE TOTALED!" : hitCar ? "WRECKED! RAGDOLL EJECTION!" : "LOWSIDE! HOLD THE LINE!", 1.9);
   }
 
   private finishRace(outcome: "finished" | "wrecked" | "busted"): void {
+    if (this.ragdollActive && this.player) {
+      this.ragdollActive = false;
+      this.player.rider.root.position.set(0, 0, 0);
+      this.player.rider.root.rotation.set(0, 0, 0);
+      this.player.visual.chassisPivot.add(this.player.rider.root);
+      if (this.ragdollGroup) {
+        this.pipeline.scene.remove(this.ragdollGroup);
+        this.ragdollGroup = null;
+      }
+    }
     this.screen = "results";
     this.audio.updateTelemetry(false, 0, false, 0, 0);
     this.audio.stopMusic();
@@ -1545,7 +1827,7 @@ export class GameEngine {
 
   private syncVisuals(dt: number, playerNitro: boolean, playerBraking: boolean): void {
     for (const r of this.racers) {
-      const visible = r.isPlayer || (r.s > this.player.s - 14 && r.s < this.player.s + 130);
+      const visible = r.isPlayer || (r.s > this.player.s - 12 && r.s < this.player.s + 115);
       r.visual.root.visible = visible;
       if (!visible) continue;
       // Only player bike casts expensive dynamic PCFSoft shadow; rivals use grounded Multiply AO contact shadows
@@ -1559,35 +1841,39 @@ export class GameEngine {
       }
       const wp = this.track.toWorld(r.s, r.laneX);
       r.visual.root.position.set(wp.x, wp.y + r.yOffset, wp.z);
-      r.visual.root.rotation.set(wp.pitch, wp.yaw, 0);
+      const extraSpinY = r.isPlayer && r.crashed ? this.bikeSpinYaw : 0;
+      r.visual.root.rotation.set(wp.pitch, wp.yaw + extraSpinY, 0);
 
       if (r.crashed) {
-        r.visual.chassisPivot.rotation.set(0, 0, r.crashDir * 1.28);
-        r.visual.chassisPivot.position.y = 0.24;
+        r.visual.chassisPivot.rotation.set(0, 0, r.crashDir * 1.4);
+        r.visual.chassisPivot.position.y = 0.22;
       } else {
         // Right-hand rule around +Z tilts top (+Y) toward -X (Screen Right) when rotation.z > 0
         r.visual.chassisPivot.rotation.set(r.pitchOffset, 0, r.lean);
         r.visual.chassisPivot.position.y = 0;
-        r.visual.frontWheelPivot.rotation.y = -r.lean * 0.28;
+        const barWobble = r.isPlayer && this.barWobbleTimer > 0 ? Math.sin(this.totalElapsed * 56) * (this.barWobbleTimer * 0.48) : 0;
+        r.visual.frontWheelPivot.rotation.y = -r.lean * 0.28 + barWobble;
       }
 
       const showFlame = r.isPlayer ? playerNitro : r.speed > 62;
       r.visual.setEffects(r.speed, dt, showFlame && !r.crashed, r.isPlayer ? playerBraking : false);
 
-      const dur = r.attackType === "kick" ? 0.24 : WEAPONS[r.weapon].swingDuration;
-      const prog = r.attackTimer > 0 ? 1 - r.attackTimer / dur : 0;
-      r.rider.updatePose(
-        r.lean / 0.58,
-        Math.min(1, r.speed / 85),
-        prog,
-        r.attackSide,
-        r.attackType,
-        this.totalElapsed
-      );
+      if (!(r.isPlayer && this.ragdollActive)) {
+        const dur = r.attackType === "kick" ? 0.24 : WEAPONS[r.weapon].swingDuration;
+        const prog = r.attackTimer > 0 ? 1 - r.attackTimer / dur : 0;
+        r.rider.updatePose(
+          r.lean / 0.58,
+          Math.min(1, r.speed / 85),
+          prog,
+          r.attackSide,
+          r.attackType,
+          this.totalElapsed
+        );
+      }
     }
 
     for (const t of this.traffic) {
-      const visible = t.disabledTimer <= 0 && t.s > this.player.s - 14 && t.s < this.player.s + 140;
+      const visible = t.disabledTimer <= 0 && t.s > this.player.s - 12 && t.s < this.player.s + 115;
       t.visual.root.visible = visible;
       if (!visible) continue;
       const castCarSh = t.s - this.player.s > -5 && t.s - this.player.s < 22 && t.kind === "police";
@@ -1602,7 +1888,15 @@ export class GameEngine {
       t.visual.root.position.set(wt.x, wt.y, wt.z);
       const baseYaw = wt.yaw + (t.oncoming ? Math.PI : t.roadblock ? Math.PI / 2 : 0);
       t.visual.root.rotation.set(0, baseYaw + t.yawWobble, 0);
+      t.visual.bodyPivot.rotation.set(t.pitchAngle, 0, t.rollAngle);
       t.visual.spinWheels(t.distRolled);
+      if (t.brakeTimer > 0) {
+        this.audio.setSkidIntensity(0.75);
+        if (Math.random() < 0.65) {
+          this.vfx.spawnSmoke(wt.x, wt.y + 0.16, wt.z - (t.oncoming ? -1.4 : 1.4), 1, 0.9);
+        }
+      }
+      t.visual.setHazard(this.totalElapsed, t.hazardTimer > 0 || t.brakeTimer > 0);
       if (t.kind === "police") {
         t.visual.setStrobe(this.totalElapsed, true);
       }
@@ -1739,6 +2033,26 @@ export class GameEngine {
       },
       setCameraMode: (mode: number) => {
         this.save.settings.cameraMode = mode % 3;
+      },
+      cycleRadioStation: () => this.cycleRadioStation(),
+      forceCarCrashTest: () => {
+        if (!this.player) return;
+        this.countdownTimer = 0;
+        this.postCrashGhostTimer = 0;
+        this.player.crashed = false;
+        this.player.crashTimer = 0;
+        this.player.speed = 65; // ~145 MPH
+        this.player.laneX = 2.0;
+        const targetCar = this.traffic.find((t) => t.kind === "exotic" && !t.roadblock) || this.traffic[0];
+        if (targetCar) {
+          targetCar.disabledTimer = 0;
+          targetCar.oncoming = false;
+          targetCar.speed = 20;
+          targetCar.s = this.player.s + 10.5;
+          targetCar.laneX = this.player.laneX;
+        }
+        const pW = this.track.toWorld(this.player.s, this.player.laneX);
+        this.cameraRig.reset(pW.yaw, pW.y);
       },
     };
   }

@@ -63,7 +63,8 @@ export class CameraRig {
     braking: boolean,
     leanRad: number,
     mode: number,
-    elapsed: number
+    elapsed: number,
+    wreckFocus?: { x: number; y: number; z: number; blend: number }
   ): void {
     this.trauma = Math.max(0, this.trauma - dt * 2.1);
     const shake = this.trauma * this.trauma;
@@ -85,7 +86,12 @@ export class CameraRig {
     const targetPitchOff = braking ? -0.08 : nitroActive ? 0.06 : 0;
     this.smoothPitchOffset += (targetPitchOff - this.smoothPitchOffset) * (1 - Math.exp(-9 * dt));
 
-    const targetFov = (mode === 2 ? 74 : mode === 1 ? 62 : 58) + speedNorm * 13 + (nitroActive ? 5 : 0);
+    const wreckBlend = wreckFocus ? THREE.MathUtils.clamp(wreckFocus.blend, 0, 1) : 0;
+    const targetFov =
+      (mode === 2 ? 74 : mode === 1 ? 62 : 58) +
+      speedNorm * 13 +
+      (nitroActive ? 5 : 0) +
+      wreckBlend * 8;
     this.smoothFov += (targetFov - this.smoothFov) * (1 - Math.exp(-8 * dt));
     camera.fov = this.smoothFov;
     camera.updateProjectionMatrix();
@@ -110,6 +116,9 @@ export class CameraRig {
       lookHeight = 1.12;
     }
 
+    offsetDist += wreckBlend * 2.25;
+    offsetHeight += wreckBlend * 0.9;
+
     const sx = shake * 0.34 * Math.sin(elapsed * 43);
     const sy = shake * 0.25 * Math.cos(elapsed * 51);
     const roadVib = speedNorm * 0.008 * Math.sin(elapsed * 64);
@@ -120,11 +129,12 @@ export class CameraRig {
 
     camera.position.set(baseX + rgtX * sx, baseY + sy + roadVib, baseZ + rgtZ * sx);
 
-    camera.lookAt(
-      lookAheadWorldX,
-      (mode === 2 ? playerWorldY : this.smoothY) * 0.35 + lookAheadWorldY * 0.65 + lookHeight,
-      lookAheadWorldZ
-    );
+    const aimX = THREE.MathUtils.lerp(lookAheadWorldX, wreckFocus?.x ?? lookAheadWorldX, wreckBlend);
+    const baseLookY = (mode === 2 ? playerWorldY : this.smoothY) * 0.35 + lookAheadWorldY * 0.65 + lookHeight;
+    const aimY = THREE.MathUtils.lerp(baseLookY, (wreckFocus?.y ?? baseLookY) + 0.45, wreckBlend);
+    const aimZ = THREE.MathUtils.lerp(lookAheadWorldZ, wreckFocus?.z ?? lookAheadWorldZ, wreckBlend);
+
+    camera.lookAt(aimX, aimY, aimZ);
 
     // Apply local camera-axis roll AFTER lookAt (avoids Euler Y-pi inversion bugs on curves!)
     // Right turn (leanRad > 0) rolls camera slightly clockwise (+Z from camera looking at -Z? In Three camera local -Z is forward, so +Z roll tilts horizon!)

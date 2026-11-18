@@ -20,6 +20,9 @@ export interface MaterialKit {
   darkAlloyMat: THREE.MeshStandardMaterial;
   skyscraperNightMat: THREE.MeshStandardMaterial;
   skyscraperDayMat: THREE.MeshStandardMaterial;
+  skyscraperDayMats: THREE.MeshStandardMaterial[];
+  billboardMat: THREE.MeshStandardMaterial;
+  palmFrondTex: THREE.CanvasTexture;
   highwaySignMat: THREE.MeshStandardMaterial;
   rampMat: THREE.MeshStandardMaterial;
   ferrariAoMat: THREE.MeshBasicMaterial;
@@ -406,6 +409,115 @@ export function createMaterialKit(assets: LoadedAssets, maxAniso: number): Mater
     envMapIntensity: 1.45,
   });
 
+  const makeDayFacadeMat = (tex: THREE.Texture, metal = 0.22, rough = 0.88): THREE.MeshStandardMaterial => {
+    const maps = buildFacadePbrMaps(tex, false, maxAniso);
+    return new THREE.MeshStandardMaterial({
+      map: tex,
+      normalMap: maps.normalMap,
+      normalScale: new THREE.Vector2(0.58, 0.58),
+      roughnessMap: maps.roughnessMap,
+      roughness: rough,
+      metalness: metal,
+      envMapIntensity: 1.25,
+    });
+  };
+  const coastalHotelMat = makeDayFacadeMat(textures.facadeCoastal, 0.14, 0.9);
+  const brickCommercialMat = makeDayFacadeMat(textures.facadeBrick, 0.12, 0.92);
+  const modernConcreteMat = makeDayFacadeMat(textures.facadeConcrete, 0.3, 0.84);
+  const skyscraperDayMats = [skyscraperDayMat, coastalHotelMat, brickCommercialMat, modernConcreteMat];
+
+  // Crisp 512x256 highway commercial billboard canvas + subtle night backlit glow
+  const bbCanvas = document.createElement("canvas");
+  bbCanvas.width = 512;
+  bbCanvas.height = 256;
+  const bbCtx = bbCanvas.getContext("2d")!;
+  const bbGrad = bbCtx.createLinearGradient(0, 0, 512, 256);
+  bbGrad.addColorStop(0, "#0b132b");
+  bbGrad.addColorStop(0.55, "#1c2541");
+  bbGrad.addColorStop(1, "#3a506b");
+  bbCtx.fillStyle = bbGrad;
+  bbCtx.fillRect(0, 0, 512, 256);
+  bbCtx.fillStyle = "#f97316";
+  bbCtx.fillRect(0, 0, 18, 256);
+  bbCtx.fillStyle = "#38bdf8";
+  bbCtx.fillRect(18, 0, 8, 256);
+  bbCtx.fillStyle = "#ffffff";
+  bbCtx.font = "900 36px system-ui, Segoe UI, sans-serif";
+  bbCtx.fillText("APEX SUPERBIKE CO.", 42, 92);
+  bbCtx.fillStyle = "#fde047";
+  bbCtx.font = "800 22px system-ui, Segoe UI, sans-serif";
+  bbCtx.fillText("PACIFIC COAST GRAND PRIX // EXIT 14", 42, 144);
+  bbCtx.fillStyle = "#cbd5e1";
+  bbCtx.font = "700 15px system-ui, Segoe UI, sans-serif";
+  bbCtx.fillText("CARBON AERO HELMETS  •  FORGED WHEELS  •  0% APR", 42, 196);
+  const bbTex = new THREE.CanvasTexture(bbCanvas);
+  bbTex.colorSpace = THREE.SRGBColorSpace;
+  bbTex.anisotropy = maxAniso;
+  bbTex.needsUpdate = true;
+  const billboardMat = new THREE.MeshStandardMaterial({
+    map: bbTex,
+    roughness: 0.35,
+    metalness: 0.08,
+    emissive: 0xffffff,
+    emissiveMap: bbTex,
+    emissiveIntensity: 0.25,
+    envMapIntensity: 0.7,
+  });
+
+  // Feathered serrated pinnate palm frond cutout texture driven by scanned palm_leaf_diff foliage colors
+  const frondCanvas = document.createElement("canvas");
+  frondCanvas.width = 256;
+  frondCanvas.height = 512;
+  const fCtx = frondCanvas.getContext("2d")!;
+  fCtx.clearRect(0, 0, 256, 512);
+  const leafImg = textures.palmLeafDiff.image as HTMLImageElement | HTMLCanvasElement | undefined;
+  if (leafImg) {
+    // Draw a subtle tiled background pattern onto temp canvas to sample natural botanical greens
+    fCtx.save();
+    fCtx.beginPath();
+    fCtx.rect(0, 0, 256, 512);
+    fCtx.clip();
+  }
+  // Central stem (rachis)
+  fCtx.strokeStyle = "#4d6b26";
+  fCtx.lineWidth = 7;
+  fCtx.beginPath();
+  fCtx.moveTo(128, 510);
+  fCtx.quadraticCurveTo(130, 256, 128, 10);
+  fCtx.stroke();
+  // Individual fuller pinnate leaflets along both sides of the rachis (lush tropical silhouette)
+  const pairs = 26;
+  for (let i = 0; i < pairs; i++) {
+    const t = i / (pairs - 1);
+    const y = 496 - t * 474;
+    const span = (1 - Math.pow(Math.abs(t - 0.36) * 1.32, 1.3)) * 124;
+    const w = Math.max(30, span);
+    const tipY = y - 28 - t * 32;
+    const gShade = Math.round(98 + (i % 3) * 15 - t * 18);
+    const rShade = Math.round(44 + (i % 2) * 12);
+    for (const dir of [-1, 1]) {
+      fCtx.fillStyle = `rgb(${rShade}, ${gShade}, 32)`;
+      fCtx.beginPath();
+      fCtx.moveTo(128, y + 8);
+      fCtx.quadraticCurveTo(128 + dir * w * 0.56, y - 9, 128 + dir * w, tipY);
+      fCtx.quadraticCurveTo(128 + dir * w * 0.48, y + 3, 128, y - 7);
+      fCtx.closePath();
+      fCtx.fill();
+    }
+  }
+  if (leafImg) {
+    fCtx.globalCompositeOperation = "source-atop";
+    fCtx.globalAlpha = 0.28;
+    fCtx.drawImage(leafImg, 0, 0, 256, 512);
+    fCtx.globalAlpha = 1;
+    fCtx.globalCompositeOperation = "source-over";
+    fCtx.restore();
+  }
+  const palmFrondTex = new THREE.CanvasTexture(frondCanvas);
+  palmFrondTex.colorSpace = THREE.SRGBColorSpace;
+  palmFrondTex.anisotropy = maxAniso;
+  palmFrondTex.needsUpdate = true;
+
   const highwaySignMat = new THREE.MeshStandardMaterial({
     map: textures.highwaySigns,
     roughness: 0.36,
@@ -476,6 +588,9 @@ export function createMaterialKit(assets: LoadedAssets, maxAniso: number): Mater
     darkAlloyMat,
     skyscraperNightMat,
     skyscraperDayMat,
+    skyscraperDayMats,
+    billboardMat,
+    palmFrondTex,
     highwaySignMat,
     rampMat,
     ferrariAoMat,

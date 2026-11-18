@@ -29,12 +29,15 @@ const MIME_TYPES = {
   ".gltf": "model/gltf+json",
   ".bin": "application/octet-stream",
   ".hdr": "application/octet-stream",
+  ".mp3": "audio/mpeg",
+  ".ogg": "audio/ogg",
+  ".wav": "audio/wav",
 };
 
 const COMPRESSIBLE = new Set([".html", ".js", ".mjs", ".css", ".json", ".svg", ".gltf"]);
 
 function getCacheControl(reqPath) {
-  if (/^\/(assets|models|pbr|hdr|draco|fx|art)\//.test(reqPath)) {
+  if (/^\/(assets|models|pbr|hdr|draco|fx|art|audio)\//.test(reqPath)) {
     return "public, max-age=31536000, immutable";
   }
   return "no-cache";
@@ -103,8 +106,26 @@ function serveFile(req, res, method, fullPath, reqPath) {
     const headers = {
       "Content-Type": mime,
       "Cache-Control": cacheControl,
+      "Accept-Ranges": "bytes",
       "X-Content-Type-Options": "nosniff",
     };
+    const rangeHdr = String(req.headers.range || "");
+    const rangeMatch = !shouldGzip ? rangeHdr.match(/^bytes=(\d*)-(\d*)$/) : null;
+    if (rangeMatch && raw.byteLength > 0) {
+      const start = rangeMatch[1] ? Number(rangeMatch[1]) : 0;
+      const end = rangeMatch[2] ? Math.min(raw.byteLength - 1, Number(rangeMatch[2])) : raw.byteLength - 1;
+      if (start >= 0 && start <= end && start < raw.byteLength) {
+        const chunk = raw.subarray(start, end + 1);
+        res.writeHead(206, {
+          ...headers,
+          "Content-Range": `bytes ${start}-${end}/${raw.byteLength}`,
+          "Content-Length": chunk.byteLength,
+        });
+        if (method === "HEAD") return res.end();
+        res.end(chunk);
+        return;
+      }
+    }
     if (shouldGzip) {
       zlib.gzip(raw, (zipErr, zipped) => {
         if (zipErr) {

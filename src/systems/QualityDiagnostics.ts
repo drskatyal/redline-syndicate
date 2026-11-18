@@ -1,5 +1,7 @@
 import * as THREE from "three";
 
+import { AudioDiagnostics } from "./AudioEngine";
+
 export interface GameDiagnosticsSnapshot {
   title: string;
   state: string;
@@ -15,6 +17,9 @@ export interface GameDiagnosticsSnapshot {
   stamina: number;
   armor: number;
   cash: number;
+  ragdollActive?: boolean;
+  activeTrafficKinds?: string[];
+  audioDiagnostics?: AudioDiagnostics;
   renderer: {
     calls: number;
     triangles: number;
@@ -37,6 +42,8 @@ declare global {
       triggerHeliView: () => void;
       addCash: (amount: number) => void;
       setCameraMode?: (mode: number) => void;
+      cycleRadioStation?: () => string;
+      forceCarCrashTest?: () => void;
     };
   }
 }

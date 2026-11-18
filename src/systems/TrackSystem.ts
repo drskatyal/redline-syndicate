@@ -2,7 +2,11 @@ import * as THREE from "three";
 import { LoadedAssets } from "../assets/AssetLoader";
 import { MaterialKit } from "../assets/MaterialLibrary";
 import {
+  createBeachUmbrellaTemplate,
+  createBillboardTemplate,
   createCoastalPalmTemplate,
+  createLifeguardTowerTemplate,
+  createSailboatTemplate,
   createSkyscraperTemplates,
   extractPropTemplate,
   PropTemplate,
@@ -66,6 +70,10 @@ export class TrackSystem {
   private palmInsts: THREE.InstancedMesh[] = [];
   private shrubInsts: THREE.InstancedMesh[] = [];
   private boulderInsts: THREE.InstancedMesh[] = [];
+  private billboardInsts: THREE.InstancedMesh[] = [];
+  private lifeguardInsts: THREE.InstancedMesh[] = [];
+  private umbrellaInsts: THREE.InstancedMesh[] = [];
+  private sailboatInsts: THREE.InstancedMesh[] = [];
 
   // Instanced highway infrastructure
   private gantryPostInst: THREE.InstancedMesh;
@@ -178,7 +186,7 @@ export class TrackSystem {
     const barrierTpl = extractPropTemplate(assets.models.roadBarrier, 0.92, true);
     const lampTpl = extractPropTemplate(assets.models.streetLamp, 7.2, false);
     const treeTpl = extractPropTemplate(assets.models.tree, 6.8, false);
-    const palmTpl = createCoastalPalmTemplate(assets);
+    const palmTpl = createCoastalPalmTemplate(assets, kit);
     const shrubTpl = extractPropTemplate(assets.models.shrub, 1.35, false);
     const boulderTpl = extractPropTemplate(assets.models.boulder, 3.8, false);
 
@@ -188,25 +196,29 @@ export class TrackSystem {
     this.palmInsts = buildInstList(palmTpl, 36, false);
     this.shrubInsts = buildInstList(shrubTpl, 32, false);
     this.boulderInsts = buildInstList(boulderTpl, 24, false);
+    this.billboardInsts = buildInstList(createBillboardTemplate(kit), 8, false);
+    this.lifeguardInsts = buildInstList(createLifeguardTowerTemplate(kit), 8, false);
+    this.umbrellaInsts = buildInstList(createBeachUmbrellaTemplate(), 24, false);
+    this.sailboatInsts = buildInstList(createSailboatTemplate(), 12, false);
 
     // 5. Overhead DOT Steel Highway Sign Gantries + Concrete Overpasses with Anchored Piers
     this.gantryPostInst = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.18, 0.22, 6.8, 8), kit.darkAlloyMat, 16);
     this.gantryBeamInst = new THREE.InstancedMesh(new THREE.BoxGeometry(ROAD_WIDTH + 2.4, 0.42, 0.42), kit.darkAlloyMat, 8);
     this.gantrySignInst = new THREE.InstancedMesh(new THREE.BoxGeometry(8.6, 2.2, 0.16), kit.highwaySignMat, 8);
-    this.bridgeDeckInst = new THREE.InstancedMesh(new THREE.BoxGeometry(46, 1.8, 9.5), kit.concreteMat, 6);
-    this.bridgePierInst = new THREE.InstancedMesh(new THREE.BoxGeometry(2.8, 12.0, 9.0), kit.concreteMat, 12);
+    this.bridgeDeckInst = new THREE.InstancedMesh(new THREE.BoxGeometry(58, 1.8, 9.5), kit.concreteMat, 6);
+    this.bridgePierInst = new THREE.InstancedMesh(new THREE.BoxGeometry(2.8, 14.0, 9.0), kit.concreteMat, 12);
 
-    // 6. Curtain-Wall High-Rise Buildings (3 archetypes)
+    // 6. Varied Architectural High-Rise & Mid-Rise Buildings (4 distinct silhouettes & facades)
     const skyTpls = createSkyscraperTemplates();
-    for (const geo of skyTpls.geometries) {
-      const im = new THREE.InstancedMesh(geo, kit.skyscraperDayMat, 24);
+    skyTpls.geometries.forEach((geo, idx) => {
+      const im = new THREE.InstancedMesh(geo, kit.skyscraperDayMats[idx % kit.skyscraperDayMats.length], 24);
       im.count = 0;
       im.castShadow = false;
       im.receiveShadow = true;
       im.frustumCulled = false;
       this.towerInsts.push(im);
       this.group.add(im);
-    }
+    });
 
     // 7. Asphalt Construction / Bridge Grade Ramps
     this.rampInst = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 0.4, 1), kit.rampMat, 10);
@@ -259,10 +271,9 @@ export class TrackSystem {
       );
     }
 
-    const towerMat = stage.isNight ? this.kit.skyscraperNightMat : this.kit.skyscraperDayMat;
-    for (const ti of this.towerInsts) {
-      ti.material = towerMat;
-    }
+    this.towerInsts.forEach((ti, idx) => {
+      ti.material = stage.isNight ? this.kit.skyscraperNightMat : this.kit.skyscraperDayMats[idx % this.kit.skyscraperDayMats.length];
+    });
 
     this.ramps = [];
     const usable = stage.lengthMeters - 500;
@@ -461,11 +472,11 @@ export class TrackSystem {
       im.instanceMatrix.needsUpdate = true;
     }
 
-    // 3. Overhead DOT Sign Gantries every 96m & Concrete Highway Overpasses every 180m
+    // 3. Overhead DOT Sign Gantries every 240m & Concrete Highway Overpasses every 260m
     let postIdx = 0;
     let beamIdx = 0;
     let bridgeIdx = 0;
-    const gantryStep = 96;
+    const gantryStep = 240;
     const firstGantryS = Math.floor((cameraS - 10) / gantryStep) * gantryStep;
     for (let k = 0; k < 6; k++) {
       const s = firstGantryS + k * gantryStep;
@@ -511,8 +522,8 @@ export class TrackSystem {
 
       for (const side of [-1, 1]) {
         if (bridgePierIdx < 12) {
-          const off = side * 12.2;
-          this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y + 3.2, wc.z + wc.rightZ * off);
+          const off = side * 19.5;
+          this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y + 3.0, wc.z + wc.rightZ * off);
           this.tmpDummy.rotation.set(0, wc.yaw * 0.45, 0);
           this.tmpDummy.scale.set(1, 1, 1);
           this.tmpDummy.updateMatrix();
@@ -521,38 +532,118 @@ export class TrackSystem {
       }
     }
 
-    // 4. City Buildings / Beachfront Hotels & Palms / Cliffs
-    const towerCounts = [0, 0, 0];
+    // 4. City Buildings / Beachfront Hotels, Brick Lofts, Travertine Towers, Palms & Coastal Props
+    const towerCounts = [0, 0, 0, 0];
     const showTowers = this.stage?.biome === "vice" || this.stage?.biome === "kowloon" || this.stage?.biome === "sanverona";
     if (showTowers) {
-      const towerStep = isBeach ? 46 : 34;
+      const towerStep = isBeach ? 38 : 34;
       const firstTower = Math.floor((cameraS - 34) / towerStep) * towerStep;
-      for (let k = 0; k < 18; k++) {
+      for (let k = 0; k < 20; k++) {
         const s = firstTower + k * towerStep;
         const slot = Math.round(s / towerStep);
         const wc = this.toWorld(s, 0);
-        // On coastal beach route, place condos/hotels on inland Left side (-1) only so Right stays open beach & sea!
+        // On coastal beach route, place mixed beachfront hotels/lofts/towers on inland Left side (-1) so Right stays open ocean!
         const sides = isBeach ? [-1] : [-1, 1];
         for (const side of sides) {
-          const arch = Math.abs(slot * 5 + (side > 0 ? 1 : 2)) % 3;
+          const arch = Math.abs(slot * 7 + (side > 0 ? 1 : 3)) % 4;
           if (towerCounts[arch] >= 24) continue;
-          const dist = ROAD_WIDTH * 0.5 + (isBeach ? 18 : 14) + (Math.abs(slot * 13 + side * 7) % 18);
-          const h = (isBeach ? 20 : 32) + (Math.abs(slot * 29 + side * 11) % (isBeach ? 26 : 42));
-          const w = 13 + (Math.abs(slot * 17) % 9);
+          const dist = ROAD_WIDTH * 0.5 + (isBeach ? 16 : 14) + (Math.abs(slot * 13 + side * 7) % 22);
+          const minH = arch === 2 ? 15 : arch === 1 ? 20 : 28;
+          const spanH = arch === 2 ? 14 : arch === 1 ? 20 : 38;
+          const h = minH + (Math.abs(slot * 29 + side * 11) % (isBeach ? spanH : spanH + 14));
+          const w = (arch === 2 ? 18 : 13) + (Math.abs(slot * 17) % 10);
           const off = side * dist;
 
           this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y - 2.0, wc.z + wc.rightZ * off);
-          this.tmpDummy.rotation.set(0, ((slot % 4) * 0.14) * side, 0);
+          this.tmpDummy.rotation.set(0, ((slot % 4) * Math.PI * 0.5) + (((slot * 3) % 5) - 2) * 0.04, 0);
           this.tmpDummy.scale.set(w, h, w);
           this.tmpDummy.updateMatrix();
           this.towerInsts[arch].setMatrixAt(towerCounts[arch]++, this.tmpDummy.matrix);
         }
       }
     }
-    for (let a = 0; a < 3; a++) {
+    for (let a = 0; a < 4; a++) {
       this.towerInsts[a].count = towerCounts[a];
       this.towerInsts[a].instanceMatrix.needsUpdate = true;
     }
+
+    // Commercial Billboards along highway corridor every 190m
+    let bbIdx = 0;
+    const bbStep = 190;
+    const firstBb = Math.floor((cameraS - 20) / bbStep) * bbStep;
+    for (let k = 0; k < 5; k++) {
+      const s = firstBb + k * bbStep;
+      if (s < 110 || bbIdx >= 8) continue;
+      const slot = Math.round(s / bbStep);
+      const side = isBeach ? -1 : slot % 2 === 0 ? -1 : 1;
+      const wc = this.toWorld(s, 0);
+      const off = side * (ROAD_WIDTH * 0.5 + 10.5);
+      this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y - 0.1, wc.z + wc.rightZ * off);
+      // Face toward approaching player (+Z traffic -> face -Z rotated slightly toward road)
+      this.tmpDummy.rotation.set(0, wc.yaw + Math.PI + side * 0.24, 0);
+      this.tmpDummy.scale.set(1, 1, 1);
+      this.tmpDummy.updateMatrix();
+      for (const im of this.billboardInsts) im.setMatrixAt(bbIdx, this.tmpDummy.matrix);
+      bbIdx++;
+    }
+    for (const im of this.billboardInsts) { im.count = bbIdx; im.instanceMatrix.needsUpdate = true; }
+
+    // Beachfront Lifeguard Towers, Resort Umbrellas & Horizon Sailboats (on coastal stages)
+    let lgIdx = 0;
+    let umbIdx = 0;
+    let boatIdx = 0;
+    if (isBeach) {
+      const lgStep = 95;
+      const firstLg = Math.floor((cameraS - 20) / lgStep) * lgStep;
+      for (let k = 0; k < 6; k++) {
+        const s = firstLg + k * lgStep;
+        if (s < 50 || lgIdx >= 8) continue;
+        const wc = this.toWorld(s, 0);
+        const off = ROAD_WIDTH * 0.5 + 14.5 + ((Math.round(s / lgStep) * 3) % 6);
+        this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y - 1.35, wc.z + wc.rightZ * off);
+        this.tmpDummy.rotation.set(0, wc.yaw + 0.45, 0);
+        this.tmpDummy.scale.set(1, 1, 1);
+        this.tmpDummy.updateMatrix();
+        for (const im of this.lifeguardInsts) im.setMatrixAt(lgIdx, this.tmpDummy.matrix);
+        lgIdx++;
+      }
+
+      const umbStep = 30;
+      const firstUmb = Math.floor((cameraS - 18) / umbStep) * umbStep;
+      for (let k = 0; k < 16; k++) {
+        const s = firstUmb + k * umbStep;
+        if (s < 20 || umbIdx >= 24) continue;
+        const slot = Math.round(s / umbStep);
+        const wc = this.toWorld(s, 0);
+        const off = ROAD_WIDTH * 0.5 + 11.5 + (Math.abs(slot * 5) % 8);
+        this.tmpDummy.position.set(wc.x + wc.rightX * off, wc.y - 1.35, wc.z + wc.rightZ * off);
+        this.tmpDummy.rotation.set(0.06 * Math.sin(slot), slot * 0.8, 0.05 * Math.cos(slot));
+        this.tmpDummy.scale.setScalar(1.1);
+        this.tmpDummy.updateMatrix();
+        for (const im of this.umbrellaInsts) im.setMatrixAt(umbIdx, this.tmpDummy.matrix);
+        umbIdx++;
+      }
+
+      const boatStep = 72;
+      const firstBoat = Math.floor((cameraS - 30) / boatStep) * boatStep;
+      for (let k = 0; k < 8; k++) {
+        const s = firstBoat + k * boatStep;
+        if (s < 40 || boatIdx >= 12) continue;
+        const slot = Math.round(s / boatStep);
+        const wc = this.toWorld(s, 0);
+        const off = 54 + (Math.abs(slot * 19) % 58);
+        const bob = Math.sin(time * 1.4 + slot) * 0.22;
+        this.tmpDummy.position.set(wc.x + wc.rightX * off, -2.55 + bob, wc.z + wc.rightZ * off);
+        this.tmpDummy.rotation.set(bob * 0.14, wc.yaw + Math.PI * 0.35 + (slot % 3) * 0.2, bob * 0.18);
+        this.tmpDummy.scale.setScalar(1.35);
+        this.tmpDummy.updateMatrix();
+        for (const im of this.sailboatInsts) im.setMatrixAt(boatIdx, this.tmpDummy.matrix);
+        boatIdx++;
+      }
+    }
+    for (const im of this.lifeguardInsts) { im.count = lgIdx; im.instanceMatrix.needsUpdate = true; }
+    for (const im of this.umbrellaInsts) { im.count = umbIdx; im.instanceMatrix.needsUpdate = true; }
+    for (const im of this.sailboatInsts) { im.count = boatIdx; im.instanceMatrix.needsUpdate = true; }
 
     let palmIdx = 0;
     let treeIdx = 0;

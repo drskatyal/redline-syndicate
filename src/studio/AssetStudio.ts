@@ -4,7 +4,10 @@ import { loadAllGameAssets, LoadedAssets } from "../assets/AssetLoader";
 import { createMaterialKit, MaterialKit } from "../assets/MaterialLibrary";
 import {
   createArmoredRiderInstance,
+  createBeachUmbrellaTemplate,
+  createBillboardTemplate,
   createCoastalPalmTemplate,
+  createLifeguardTowerTemplate,
   createPursuitHelicopterInstance,
   createSkyscraperTemplates,
   createSuperbikeInstance,
@@ -130,9 +133,9 @@ export async function startAssetStudio(canvas: HTMLCanvasElement): Promise<void>
     const info: Record<string, unknown> = { plate: idx };
 
     if (idx === 0) {
-      // Plate 0: Superbike + Human Street Rider (Front 3/4 + Rear Chase + Wheel Spin + Alloy Bat Strike)
+      // Plate 0: Superbike + Photogrammetry Hero Rider (`Michelle.glb`) vs Rival Helmeted Street Rider
       const leftBike: SuperbikeVisual = createSuperbikeInstance(assets, kit, BIKES[0], 0xe11d48, 0xf59e0b);
-      const leftRider = createArmoredRiderInstance(assets, 0x161b26, 0x1f2937, "katana");
+      const leftRider = createArmoredRiderInstance(assets, 0x161b26, 0x1f2937, "katana", true);
       leftBike.chassisPivot.add(leftRider.root);
       leftBike.root.position.set(-1.35, 0, 0);
       leftBike.root.rotation.y = 0.52;
@@ -141,7 +144,7 @@ export async function startAssetStudio(canvas: HTMLCanvasElement): Promise<void>
       stageGroup.add(leftBike.root);
 
       const rightBike: SuperbikeVisual = createSuperbikeInstance(assets, kit, BIKES[2], 0x0284c7, 0xf59e0b);
-      const rightRider = createArmoredRiderInstance(assets, 0x7f1d1d, 0xf59e0b, "katana");
+      const rightRider = createArmoredRiderInstance(assets, 0x7f1d1d, 0xf59e0b, "katana", false);
       rightBike.chassisPivot.add(rightRider.root);
       rightBike.root.position.set(1.35, 0, -0.4);
       rightBike.root.rotation.y = Math.PI + 0.35; // Rear 3/4 chase inspection!
@@ -155,31 +158,35 @@ export async function startAssetStudio(canvas: HTMLCanvasElement): Promise<void>
       info.bikeLengthZ = Number(bL.getSize(new THREE.Vector3()).z.toFixed(3));
       camera.position.set(0.0, 1.55, 4.35);
       camera.lookAt(0.0, 0.84, -0.1);
-      label.textContent = `PLATE 1: Superbike + Human Street Rider (Front 3/4 & Rear Chase + Bat Strike) | minY=${info.bikeBoundsY}`;
+      label.textContent = `PLATE 1: Carbon-Gold Hero Rider & Rival Street Racer (Full-Face MotoGP Helmets)`;
     } else if (idx === 1) {
-      // Plate 1: Police Ferrari Interceptor + Exotic Supercars
+      // Plate 1: BMW M3 Police Interceptor, Tesla Model 3 Sedan, BMW M3 E30, Ferrari Supercar
       const cop: TrafficVisual = createTrafficVehicleInstance(assets, kit, "police", 0);
-      cop.root.position.set(-2.7, 0, 0.6);
+      cop.root.position.set(-3.6, 0, 0.4);
       cop.root.rotation.y = 0.36;
       cop.spinWheels(2.0);
       cop.setStrobe(0.12, true);
 
+      const teslaSedan = createTrafficVehicleInstance(assets, kit, "sedan", 2);
+      teslaSedan.root.position.set(-1.15, 0, -0.5);
+      teslaSedan.root.rotation.y = Math.PI - 0.25;
+
+      const bmwMuscle = createTrafficVehicleInstance(assets, kit, "muscle", 1);
+      bmwMuscle.root.position.set(1.25, 0, -0.35);
+      bmwMuscle.root.rotation.y = -0.28;
+
       const ferrariRed = createTrafficVehicleInstance(assets, kit, "exotic", 0);
-      ferrariRed.root.position.set(0.0, 0, -0.4);
-      ferrariRed.root.rotation.y = Math.PI - 0.32; // Rear 3/4 taillight view!
+      ferrariRed.root.position.set(3.65, 0, 0.4);
+      ferrariRed.root.rotation.y = -0.38;
 
-      const ferrariSilver = createTrafficVehicleInstance(assets, kit, "exotic", 2);
-      ferrariSilver.root.position.set(2.8, 0, 0.5);
-      ferrariSilver.root.rotation.y = -0.34;
-
-      stageGroup.add(cop.root, ferrariRed.root, ferrariSilver.root);
+      stageGroup.add(cop.root, teslaSedan.root, bmwMuscle.root, ferrariRed.root);
       stageGroup.updateMatrixWorld(true);
       const bc = new THREE.Box3().setFromObject(cop.root);
       info.copMinY = Number(bc.min.y.toFixed(3));
       info.copSize = bc.getSize(new THREE.Vector3()).toArray().map((n) => Number(n.toFixed(2)));
-      camera.position.set(0.0, 2.15, 7.6);
+      camera.position.set(0.0, 2.35, 9.2);
       camera.lookAt(0.0, 0.65, 0.1);
-      label.textContent = `PLATE 2: Apex Police Interceptor + Exotic Supercars (+Z Forward) | minY=${info.copMinY}`;
+      label.textContent = `PLATE 2: BMW Police Patrol, Tesla Model 3, BMW M3 E30 & Ferrari (+Z Forward) | minY=${info.copMinY}`;
     } else if (idx === 2) {
       // Plate 2: Commercial Freight Transport + Bell Huey Helicopter
       const truck = createTrafficVehicleInstance(assets, kit, "truck", 0);
@@ -199,11 +206,13 @@ export async function startAssetStudio(canvas: HTMLCanvasElement): Promise<void>
       camera.lookAt(0.4, 1.8, -0.4);
       label.textContent = `PLATE 3: Brushed-Metal Freight Truck + Bell Huey Helicopter`;
     } else if (idx === 3) {
-      // Plate 3: Poly Haven Scanned Barriers, Street Lamps, Trees, Shrubs, Boulders + DOT Sign Gantry
+      // Plate 3: Poly Haven Barriers, Lamps, Feathered Palms, Coastal Lifeguard Tower, Umbrella, Billboard + DOT Gantry
       const barrierTpl = extractPropTemplate(assets.models.roadBarrier, 0.95, true);
       const lampTpl = extractPropTemplate(assets.models.streetLamp, 6.8, false);
-      const treeTpl = extractPropTemplate(assets.models.tree, 6.4, false);
-      const palmTpl = createCoastalPalmTemplate(assets);
+      const palmTpl = createCoastalPalmTemplate(assets, kit);
+      const lifeguardTpl = createLifeguardTowerTemplate(kit);
+      const umbrellaTpl = createBeachUmbrellaTemplate();
+      const billboardTpl = createBillboardTemplate(kit);
       const shrubTpl = extractPropTemplate(assets.models.shrub, 1.4, false);
       const boulderTpl = extractPropTemplate(assets.models.boulder, 2.2, false);
 
@@ -220,38 +229,39 @@ export async function startAssetStudio(canvas: HTMLCanvasElement): Promise<void>
         stageGroup.add(g);
       };
 
-      addTpl(barrierTpl.parts, -5.2, 0, 0, 0);
-      addTpl(barrierTpl.parts, -5.2, 0, 3.1, 0);
-      addTpl(lampTpl.parts, -3.2, 0, -1.5, Math.PI * 0.5);
-      addTpl(palmTpl.parts, 2.6, 0, -1.2, 0.2);
-      addTpl(treeTpl.parts, -0.4, 0, -2.5, 0.4);
-      addTpl(shrubTpl.parts, 0.8, 0, 1.6, 0);
-      addTpl(boulderTpl.parts, 4.8, 0, -2.5, 0.8);
+      addTpl(barrierTpl.parts, -5.6, 0, 2.2, 0);
+      addTpl(lampTpl.parts, -4.2, 0, -0.5, Math.PI * 0.5);
+      addTpl(palmTpl.parts, -1.2, 0, -0.4, 0.35);
+      addTpl(lifeguardTpl.parts, 3.6, 0, -0.8, -0.25);
+      addTpl(umbrellaTpl.parts, 2.1, 0, 2.8, 0);
+      addTpl(billboardTpl.parts, 6.2, 0, -5.5, -0.22);
+      addTpl(shrubTpl.parts, 0.8, 0, 2.4, 0);
+      addTpl(boulderTpl.parts, 5.2, 0, 1.8, 0.8);
 
-      // Steel truss overhead highway sign gantry using generated DOT signs on the camera-facing side
+      // Steel truss overhead highway sign gantry set further back so foreground props & palms shine cleanly
       const signGantry = new THREE.Group();
       const postL = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.22, 5.2, 10), kit.darkAlloyMat);
-      postL.position.set(-4.8, 2.6, 4.2);
+      postL.position.set(-5.4, 2.6, -5.2);
       const postR = postL.clone();
-      postR.position.set(4.8, 2.6, 4.2);
-      const beam = new THREE.Mesh(new THREE.BoxGeometry(10.0, 0.34, 0.34), kit.darkAlloyMat);
-      beam.position.set(0, 4.7, 4.15);
+      postR.position.set(5.4, 2.6, -5.2);
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(11.2, 0.34, 0.34), kit.darkAlloyMat);
+      beam.position.set(0, 4.7, -5.25);
       const signBoard = new THREE.Mesh(new THREE.BoxGeometry(6.4, 2.0, 0.14), kit.highwaySignMat);
-      signBoard.position.set(0, 4.7, 4.46);
+      signBoard.position.set(0, 4.7, -4.94);
       signGantry.add(postL, postR, beam, signBoard);
       stageGroup.add(signGantry);
 
-      camera.position.set(0.0, 2.8, 12.6);
-      camera.lookAt(0.0, 2.6, 1.0);
-      label.textContent = `PLATE 4: Poly Haven Scanned Barriers, Lamps, Flora, Cliffs + DOT Sign Gantry`;
+      camera.position.set(0.0, 4.2, 14.8);
+      camera.lookAt(0.2, 4.2, -1.5);
+      label.textContent = `PLATE 4: Feathered Coastal Palm, Lifeguard Tower, Umbrella, Billboard, Barriers & DOT Gantry`;
     } else {
-      // Plate 4: Multi-Tier Glass Curtain-Wall Skyscrapers with HDR Reflections
+      // Plate 4: 4 Distinct Architectural Building Styles with Varied Facades & PBR Reflections
       const skyTpls = createSkyscraperTemplates();
       const placements = [
-        { x: -13, z: -8, w: 12, h: 38, mat: kit.skyscraperNightMat, v: 0 },
-        { x: 12, z: -12, w: 14, h: 48, mat: kit.skyscraperNightMat, v: 1 },
-        { x: -15, z: 12, w: 11, h: 30, mat: kit.skyscraperDayMat, v: 2 },
-        { x: 14, z: 10, w: 12, h: 34, mat: kit.skyscraperDayMat, v: 0 },
+        { x: -16, z: -8, w: 12, h: 38, mat: kit.skyscraperDayMats[0], v: 0 },
+        { x: 16, z: -10, w: 14, h: 42, mat: kit.skyscraperDayMats[1], v: 1 },
+        { x: -15, z: 10, w: 12, h: 28, mat: kit.skyscraperDayMats[2], v: 2 },
+        { x: 15, z: 10, w: 13, h: 34, mat: kit.skyscraperDayMats[3], v: 3 },
       ];
       for (const p of placements) {
         const mesh = new THREE.Mesh(skyTpls.geometries[p.v], p.mat);
@@ -261,9 +271,9 @@ export async function startAssetStudio(canvas: HTMLCanvasElement): Promise<void>
         mesh.receiveShadow = true;
         stageGroup.add(mesh);
       }
-      camera.position.set(0.0, 4.5, 28.0);
-      camera.lookAt(0.0, 12.0, -4.0);
-      label.textContent = `PLATE 5: Stepped Glass Curtain-Wall Skyscrapers + Wet Asphalt HDR Reflections`;
+      camera.position.set(0.0, 4.5, 29.5);
+      camera.lookAt(0.0, 12.0, -3.0);
+      label.textContent = `PLATE 5: 4 Distinct Architectural Towers (Glass, Coastal Hotel, Brick Loft, Travertine)`;
     }
 
     renderer.info.reset();
