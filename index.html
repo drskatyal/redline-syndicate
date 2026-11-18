@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <link rel="icon" href="data:," />
   <title>REDLINE SYNDICATE // 4K HDR WebGL2 Combat Racer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -10,6 +11,15 @@
 </head>
 <body>
   <canvas id="gameCanvas"></canvas>
+
+  <div id="loadingOverlay" class="loading-overlay">
+    <div class="loading-card">
+      <div class="eyebrow">WEBGL2 HDR STREAMING</div>
+      <div class="loading-title">REDLINE <span>SYNDICATE</span></div>
+      <div class="loading-track"><div id="loadingProgressBar" class="loading-fill"></div></div>
+      <div id="loadingLabel" class="loading-label">0% // INITIALIZING PBR ASSETS...</div>
+    </div>
+  </div>
 
   <div id="uiRoot">
     <!-- TOP GLOBAL TELEMETRY BAR (shown in Hub / Districts / Hangar) -->
@@ -27,6 +37,7 @@
           <option value="high">HIGH HDR</option>
           <option value="perf">PERF 60+</option>
         </select>
+        <button id="fullscreenBtn" class="icon-btn" title="Fullscreen (F11)">⛶</button>
         <button id="muteBtn" class="icon-btn" title="Toggle Audio">🔊</button>
       </div>
     </header>
@@ -91,6 +102,7 @@
 
     <!-- SCREEN 4: IN-RACE TACTICAL HUD -->
     <section id="raceHud" class="screen-layer hud-overlay" hidden>
+      <div id="reticleLayer" class="reticle-layer"></div>
       <div class="hud-top">
         <div class="hud-top-left">
           <div class="radar-card">
@@ -127,6 +139,7 @@
             <span id="hudCash" class="cash-val">+$0</span>
           </div>
           <button id="hudCamBtn" class="hud-mini-btn" title="Switch Camera (V)">CAM</button>
+          <button id="hudFsBtn" class="hud-mini-btn" title="Fullscreen (F11)">⛶</button>
           <button id="hudPauseBtn" class="hud-mini-btn" title="Pause (Esc)">&#10074;&#10074;</button>
         </div>
       </div>

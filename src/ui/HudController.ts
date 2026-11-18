@@ -14,6 +14,7 @@ export class HudController {
   private topKo = document.getElementById("topKo")!;
   private qualitySelect = document.getElementById("qualitySelect") as HTMLSelectElement;
   private muteBtn = document.getElementById("muteBtn")!;
+  private reticleLayer = document.getElementById("reticleLayer")!;
 
   private hubScreen = document.getElementById("hubScreen")!;
   private activeContractCard = document.getElementById("activeContractCard")!;
@@ -102,6 +103,21 @@ export class HudController {
 
     document.getElementById("hudCamBtn")!.addEventListener("click", () => {
       this.engine.save.settings.cameraMode = (this.engine.save.settings.cameraMode + 1) % 3;
+    });
+    const toggleFs = () => {
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      } else {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+    };
+    document.getElementById("fullscreenBtn")?.addEventListener("click", toggleFs);
+    document.getElementById("hudFsBtn")?.addEventListener("click", toggleFs);
+    window.addEventListener("keydown", (e) => {
+      if (e.code === "F11") {
+        e.preventDefault();
+        toggleFs();
+      }
     });
     document.getElementById("hudPauseBtn")!.addEventListener("click", () => this.engine.togglePause());
     document.getElementById("btnResume")!.addEventListener("click", () => {
@@ -248,6 +264,20 @@ export class HudController {
         save.settings.touchControls === "on" ||
         (save.settings.touchControls === "auto" && isCoarse)
       );
+
+      if (snap.targetReticles.length > 0) {
+        this.reticleLayer.innerHTML = snap.targetReticles
+          .map(
+            (rt) =>
+              `<div class="target-reticle ${rt.isCop ? "cop" : ""} ${rt.threatening ? "threat" : ""}" style="left:${rt.xPct.toFixed(1)}%;top:${rt.yPct.toFixed(1)}%">` +
+              `<span>${rt.threatening ? "! COUNTER // " : ""}${rt.name}</span>` +
+              `<div class="target-hp-bar"><div class="target-hp-fill" style="width:${Math.round(rt.staminaNorm * 100)}%"></div></div>` +
+              `</div>`
+          )
+          .join("");
+      } else if (this.reticleLayer.childElementCount > 0) {
+        this.reticleLayer.innerHTML = "";
+      }
 
       this.drawRadar(snap.radarDots);
     }

@@ -1,291 +1,453 @@
 import * as THREE from "three";
-import {
-  createChevronRampTexture,
-  createContactShadowTexture,
-  createGlowSpriteTexture,
-  createHighwayTextures,
-  createSkyscraperTexture,
-  HighwayTextureSet,
-} from "./ProceduralTextures";
+import { LoadedAssets } from "./AssetLoader";
 
-export interface MaterialKit {
-  highwayTextures: HighwayTextureSet;
-  wetAsphaltMat: THREE.MeshStandardMaterial;
-  wetAsphaltUniforms: {
-    uWetness: { value: number };
-    uTime: { value: number };
-    uAccent: { value: THREE.Color };
-  };
-  shoulderGroundMat: THREE.MeshStandardMaterial;
-  chromeMat: THREE.MeshStandardMaterial;
-  darkAlloyMat: THREE.MeshStandardMaterial;
-  carbonMat: THREE.MeshPhysicalMaterial;
-  tireRubberMat: THREE.MeshStandardMaterial;
-  glassTintedMat: THREE.MeshPhysicalMaterial;
-  tailLightMat: THREE.MeshStandardMaterial;
-  headLightMat: THREE.MeshStandardMaterial;
-  policeRedMat: THREE.MeshStandardMaterial;
-  policeBlueMat: THREE.MeshStandardMaterial;
-  skyscraperMat: THREE.MeshStandardMaterial;
-  barrierMetalMat: THREE.MeshStandardMaterial;
-  rampMat: THREE.MeshStandardMaterial;
-  rampUniforms: { uTime: { value: number }; uColor: { value: THREE.Color } };
-  empWaveMat: THREE.MeshBasicMaterial;
-  contactShadowMat: THREE.MeshBasicMaterial;
-  glowSpriteTex: THREE.CanvasTexture;
-  makePaintMaterial: (hex: number, emissiveBoost?: number) => THREE.MeshPhysicalMaterial;
-  makeNeonMaterial: (hex: number, intensity?: number) => THREE.MeshStandardMaterial;
+export interface FacadePbrMaps {
+  roughnessMap: THREE.CanvasTexture;
+  normalMap: THREE.CanvasTexture;
+  emissiveMap: THREE.CanvasTexture;
 }
 
-export function createMaterialKit(anisotropy: number): MaterialKit {
-  const highwayTextures = createHighwayTextures(anisotropy);
-  const skyTex = createSkyscraperTexture(anisotropy);
-  const contactTex = createContactShadowTexture();
-  const glowSpriteTex = createGlowSpriteTexture();
-  const rampTex = createChevronRampTexture();
+export interface MaterialKit {
+  wetAsphaltUniforms: {
+    uWetness: { value: number };
+    uRoadHalfWidth: { value: number };
+  };
+  wetAsphaltMat: THREE.MeshStandardMaterial;
+  concreteMat: THREE.MeshStandardMaterial;
+  shoulderGroundMat: THREE.MeshStandardMaterial;
+  darkAlloyMat: THREE.MeshStandardMaterial;
+  skyscraperNightMat: THREE.MeshStandardMaterial;
+  skyscraperDayMat: THREE.MeshStandardMaterial;
+  highwaySignMat: THREE.MeshStandardMaterial;
+  rampMat: THREE.MeshStandardMaterial;
+  empWaveMat: THREE.MeshBasicMaterial;
+  ferrariAoMat: THREE.MeshBasicMaterial;
+  jetFlameTex: THREE.CanvasTexture;
+  headlightPoolTex: THREE.CanvasTexture;
+  fireballTex: THREE.CanvasTexture;
+  makeNeonMaterial: (colorHex: number, emissiveIntensity?: number) => THREE.MeshStandardMaterial;
+}
+
+/**
+ * Generates roughness, tangent normal, and selective window-glow maps from a building facade image
+ * so glass windows mirror HDR skies cleanly while mullions & spandrels stay matte with physical depth.
+ */
+function buildFacadePbrMaps(imageTex: THREE.Texture, isNight: boolean, maxAniso: number): FacadePbrMaps {
+  const img = imageTex.image as HTMLImageElement | HTMLCanvasElement | undefined;
+  const size = 512;
+  const rCanvas = document.createElement("canvas");
+  const nCanvas = document.createElement("canvas");
+  const eCanvas = document.createElement("canvas");
+  rCanvas.width = nCanvas.width = eCanvas.width = size;
+  rCanvas.height = nCanvas.height = eCanvas.height = size;
+
+  const rCtx = rCanvas.getContext("2d")!;
+  const nCtx = nCanvas.getContext("2d")!;
+  const eCtx = eCanvas.getContext("2d")!;
+
+  if (img) {
+    rCtx.drawImage(img, 0, 0, size, size);
+    const src = rCtx.getImageData(0, 0, size, size);
+    const rData = rCtx.createImageData(size, size);
+    const nData = nCtx.createImageData(size, size);
+    const eData = eCtx.createImageData(size, size);
+
+    const luma = new Float32Array(size * size);
+    for (let i = 0; i < size * size; i++) {
+      const p = i * 4;
+      const r = src.data[p] / 255;
+      const g = src.data[p + 1] / 255;
+      const b = src.data[p + 2] / 255;
+      luma[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+
+    for (let y = 0; y < size; y++) {
+      const ym = Math.max(0, y - 1);
+      const yp = Math.min(size - 1, y + 1);
+      for (let x = 0; x < size; x++) {
+        const xm = Math.max(0, x - 1);
+        const xp = Math.min(size - 1, x + 1);
+        const idx = y * size + x;
+        const p = idx * 4;
+        const r = src.data[p];
+        const g = src.data[p + 1];
+        const b = src.data[p + 2];
+        const l = luma[idx];
+
+        const dx = (luma[y * size + xp] - luma[y * size + xm]) * 2.4;
+        const dy = (luma[yp * size + x] - luma[ym * size + x]) * 2.4;
+        const edge = Math.min(1, Math.hypot(dx, dy) * 2.2);
+        const glassRough = isNight ? 0.14 : 0.10;
+        const frameRough = 0.78;
+        const roughByte = Math.round(
+          Math.min(255, Math.max(20, (glassRough + edge * (frameRough - glassRough)) * 255))
+        );
+
+        rData.data[p] = roughByte;
+        rData.data[p + 1] = roughByte;
+        rData.data[p + 2] = roughByte;
+        rData.data[p + 3] = 255;
+
+        let nx = -dx;
+        let ny = -dy;
+        let nz = 0.45;
+        const inv = 1 / Math.hypot(nx, ny, nz);
+        nx *= inv;
+        ny *= inv;
+        nz *= inv;
+        nData.data[p] = Math.round((nx * 0.5 + 0.5) * 255);
+        nData.data[p + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+        nData.data[p + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+        nData.data[p + 3] = 255;
+
+        const warmBias = (r - b) / 255;
+        const winGlow = isNight ? Math.max(0, Math.min(1, (l - 0.34) * 1.9 + warmBias * 0.35)) : 0;
+        eData.data[p] = Math.round(r * winGlow);
+        eData.data[p + 1] = Math.round(g * winGlow * 0.94);
+        eData.data[p + 2] = Math.round(b * winGlow * 0.85);
+        eData.data[p + 3] = 255;
+      }
+    }
+
+    rCtx.putImageData(rData, 0, 0);
+    nCtx.putImageData(nData, 0, 0);
+    eCtx.putImageData(eData, 0, 0);
+  }
+
+  const mkTex = (canvas: HTMLCanvasElement, srgb: boolean): THREE.CanvasTexture => {
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = srgb ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.anisotropy = maxAniso;
+    tex.needsUpdate = true;
+    return tex;
+  };
+
+  return {
+    roughnessMap: mkTex(rCanvas, false),
+    normalMap: mkTex(nCanvas, false),
+    emissiveMap: mkTex(eCanvas, true),
+  };
+}
+
+/**
+ * Teardrop exhaust afterburner sprite fading cleanly to alpha=0 on all 4 edges.
+ */
+function buildJetFlameTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d")!;
+  const img = ctx.createImageData(size, size);
+
+  for (let y = 0; y < size; y++) {
+    // v=0 at top (nozzle tip), v=1 at bottom tail
+    const v = y / (size - 1);
+    const widthProfile = Math.sin(Math.pow(v, 0.55) * Math.PI) * 0.42;
+    for (let x = 0; x < size; x++) {
+      const u = x / (size - 1) - 0.5;
+      const radial = Math.min(1, Math.abs(u) / Math.max(0.02, widthProfile));
+      const axialFade = Math.sin(v * Math.PI) * Math.pow(1 - v, 0.45);
+      const intensity = Math.max(0, (1 - radial * radial) * axialFade * 1.45);
+      const core = Math.pow(Math.max(0, 1 - radial * 1.4), 2) * Math.max(0, 1 - v * 1.3);
+
+      const p = (y * size + x) * 4;
+      img.data[p] = Math.round(Math.min(255, (0.25 + core * 0.75) * 255));
+      img.data[p + 1] = Math.round(Math.min(255, (0.65 + core * 0.35) * 255));
+      img.data[p + 2] = 255;
+      img.data[p + 3] = Math.round(Math.min(255, intensity * 255));
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Soft radial headlight road pool decal fading cleanly to zero at all edges.
+ */
+function buildHeadlightPoolTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d")!;
+  const g = ctx.createRadialGradient(size * 0.5, size * 0.58, 4, size * 0.5, size * 0.5, size * 0.48);
+  g.addColorStop(0, "rgba(235, 246, 255, 0.95)");
+  g.addColorStop(0.42, "rgba(186, 230, 253, 0.45)");
+  g.addColorStop(0.85, "rgba(147, 197, 253, 0.08)");
+  g.addColorStop(1, "rgba(0, 0, 0, 0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, size, size);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+/**
+ * Combines flame noise texture with smooth radial alpha envelope so fireballs have zero square edges.
+ */
+function buildFireballTexture(flameTex: THREE.Texture): THREE.CanvasTexture {
+  const size = 256;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d")!;
+  const imgEl = flameTex.image as HTMLImageElement | HTMLCanvasElement | undefined;
+  if (imgEl) {
+    ctx.drawImage(imgEl, 0, 0, size, size);
+    const d = ctx.getImageData(0, 0, size, size);
+    for (let y = 0; y < size; y++) {
+      const ny = (y / (size - 1)) * 2 - 1;
+      for (let x = 0; x < size; x++) {
+        const nx = (x / (size - 1)) * 2 - 1;
+        const r = Math.hypot(nx, ny);
+        const alpha = Math.max(0, Math.pow(Math.max(0, 1 - r), 1.35));
+        const p = (y * size + x) * 4;
+        // Remap fiery orange/amber gradient from texture luminance
+        const lum = Math.min(1, (d.data[p] * 0.45 + d.data[p + 1] * 0.45 + d.data[p + 2] * 0.1) / 255);
+        d.data[p] = Math.round(Math.min(255, 255 * (0.75 + lum * 0.25)));
+        d.data[p + 1] = Math.round(Math.min(255, 255 * (0.28 + lum * 0.58)));
+        d.data[p + 2] = Math.round(Math.min(255, 255 * (0.04 + lum * 0.25)));
+        d.data[p + 3] = Math.round(alpha * (0.55 + lum * 0.45) * 255);
+      }
+    }
+    ctx.putImageData(d, 0, 0);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+export function createMaterialKit(assets: LoadedAssets, maxAniso: number): MaterialKit {
+  const { textures } = assets;
+
+  for (const t of [textures.asphaltDiff, textures.asphaltNor, textures.asphaltRough]) {
+    t.repeat.set(4, 4);
+  }
+  for (const t of [textures.concreteDiff, textures.concreteNor, textures.concreteRough]) {
+    t.repeat.set(6, 4);
+  }
+
+  // Crop vertical dark border around DOT highway signs
+  textures.highwaySigns.wrapS = THREE.ClampToEdgeWrapping;
+  textures.highwaySigns.wrapT = THREE.ClampToEdgeWrapping;
+  textures.highwaySigns.offset.set(0.02, 0.22);
+  textures.highwaySigns.repeat.set(0.96, 0.56);
+  textures.highwaySigns.needsUpdate = true;
 
   const wetAsphaltUniforms = {
     uWetness: { value: 0.85 },
-    uTime: { value: 0 },
-    uAccent: { value: new THREE.Color(0x00f0ff) },
+    uRoadHalfWidth: { value: 8.4 },
   };
 
   const wetAsphaltMat = new THREE.MeshStandardMaterial({
-    map: highwayTextures.albedoMap,
-    roughnessMap: highwayTextures.roughnessMap,
-    bumpMap: highwayTextures.bumpMap,
-    bumpScale: 0.045,
-    roughness: 0.88,
-    metalness: 0.08,
-    envMapIntensity: 0.85,
+    map: textures.asphaltDiff,
+    normalMap: textures.asphaltNor,
+    normalScale: new THREE.Vector2(1.15, 1.15),
+    roughnessMap: textures.asphaltRough,
+    roughness: 0.82,
+    metalness: 0.04,
+    envMapIntensity: 1.35,
   });
 
   wetAsphaltMat.onBeforeCompile = (shader) => {
     shader.uniforms.uWetness = wetAsphaltUniforms.uWetness;
-    shader.uniforms.uTime = wetAsphaltUniforms.uTime;
-    shader.uniforms.uAccent = wetAsphaltUniforms.uAccent;
-    shader.uniforms.uPuddleMask = { value: highwayTextures.puddleMaskMap };
+    shader.uniforms.uRoadHalfWidth = wetAsphaltUniforms.uRoadHalfWidth;
 
-    shader.vertexShader =
-      "varying vec2 vRoadUv;\n" +
-      shader.vertexShader.replace(
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+        varying vec3 vRoadWorldPos;
+        varying vec2 vRoadUv;`
+      )
+      .replace(
         "#include <begin_vertex>",
-        "#include <begin_vertex>\n vRoadUv = uv * vec2(1.0, 24.0);"
+        `#include <begin_vertex>
+        vRoadWorldPos = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        vRoadUv = uv;`
       );
 
-    shader.fragmentShader =
-      "uniform float uWetness;\nuniform float uTime;\nuniform vec3 uAccent;\nuniform sampler2D uPuddleMask;\nvarying vec2 vRoadUv;\n" +
-      shader.fragmentShader
-        .replace(
-          "#include <map_fragment>",
-          `#include <map_fragment>
-           float puddleSample = texture2D(uPuddleMask, vRoadUv).r;
-           float wetMask = smoothstep(0.32, 0.78, puddleSample) * clamp(uWetness, 0.0, 1.0);
-           diffuseColor.rgb *= mix(1.0, 0.42, wetMask);
-          `
-        )
-        .replace(
-          "#include <roughnessmap_fragment>",
-          `#include <roughnessmap_fragment>
-           float puddleR = texture2D(uPuddleMask, vRoadUv).r;
-           float wetMaskR = smoothstep(0.32, 0.78, puddleR) * clamp(uWetness, 0.0, 1.0);
-           roughnessFactor = mix(roughnessFactor, 0.19, wetMaskR);
-           roughnessFactor = saturate(roughnessFactor);
-          `
-        )
-        .replace(
-          "#include <emissivemap_fragment>",
-          `#include <emissivemap_fragment>
-           float centerStud = step(0.495, vRoadUv.x) * step(vRoadUv.x, 0.505) * step(0.88, fract(vRoadUv.y * 0.5));
-           float puddleTint = smoothstep(0.45, 0.85, texture2D(uPuddleMask, vRoadUv).r) * clamp(uWetness, 0.0, 1.0);
-           totalEmissiveRadiance += uAccent * (centerStud * 0.95 + puddleTint * 0.07);
-          `
-        );
-  };
-  wetAsphaltMat.customProgramCacheKey = () => "redline-wet-highway-v1";
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        "#include <common>",
+        `#include <common>
+        uniform float uWetness;
+        uniform float uRoadHalfWidth;
+        varying vec3 vRoadWorldPos;
+        varying vec2 vRoadUv;
 
-  const shoulderGroundMat = new THREE.MeshStandardMaterial({
-    color: 0x1e2230,
-    roughness: 0.92,
-    metalness: 0.04,
-    envMapIntensity: 0.35,
+        float roadHash(vec2 p) {
+          return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+        }
+        float roadNoise(vec2 p) {
+          vec2 i = floor(p);
+          vec2 f = fract(p);
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(
+            mix(roadHash(i), roadHash(i + vec2(1.0, 0.0)), u.x),
+            mix(roadHash(i + vec2(0.0, 1.0)), roadHash(i + vec2(1.0, 1.0)), u.x),
+            u.y
+          );
+        }`
+      )
+      .replace(
+        "#include <map_fragment>",
+        `#include <map_fragment>
+        {
+          float rutL = exp(-pow(abs(vRoadUv.x - 0.19) * 16.0, 2.0)) + exp(-pow(abs(vRoadUv.x - 0.39) * 16.0, 2.0));
+          float rutR = exp(-pow(abs(vRoadUv.x - 0.61) * 16.0, 2.0)) + exp(-pow(abs(vRoadUv.x - 0.81) * 16.0, 2.0));
+          diffuseColor.rgb *= mix(1.0, 0.78, clamp(rutL + rutR, 0.0, 1.0));
+
+          float doubleYellow = smoothstep(0.0045, 0.001, abs(abs(vRoadUv.x - 0.5) - 0.011));
+          float shoulderLines = smoothstep(0.006, 0.0015, min(abs(vRoadUv.x - 0.065), abs(vRoadUv.x - 0.935)));
+          float dashMask = smoothstep(0.04, 0.14, abs(fract(vRoadWorldPos.z * 0.065) - 0.5));
+          float laneLines = smoothstep(0.0045, 0.0012, min(abs(vRoadUv.x - 0.285), abs(vRoadUv.x - 0.715))) * dashMask;
+
+          float grainWear = 0.82 + 0.18 * smoothstep(0.25, 0.7, roadNoise(vRoadWorldPos.xz * 2.5));
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.86, 0.63, 0.12), doubleYellow * 0.92 * grainWear);
+          diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.88, 0.89, 0.91), (shoulderLines + laneLines) * 0.85 * grainWear);
+        }`
+      )
+      .replace(
+        "#include <roughnessmap_fragment>",
+        `#include <roughnessmap_fragment>
+        if (uWetness > 0.02) {
+          float n1 = roadNoise(vRoadWorldPos.xz * vec2(0.16, 0.045));
+          float n2 = roadNoise(vRoadWorldPos.xz * vec2(0.48, 0.14) + vec2(3.1, 7.4));
+          float puddle = smoothstep(0.54 - uWetness * 0.28, 0.80 - uWetness * 0.18, n1 * 0.68 + n2 * 0.32);
+          float damp = clamp(uWetness * 0.48 + puddle * 0.52 * uWetness, 0.0, 1.0);
+          diffuseColor.rgb *= mix(1.0, 0.44, damp * 0.72);
+          roughnessFactor = mix(roughnessFactor, 0.042, damp * 0.95);
+        }`
+      );
+  };
+
+  const concreteMat = new THREE.MeshStandardMaterial({
+    map: textures.concreteDiff,
+    normalMap: textures.concreteNor,
+    normalScale: new THREE.Vector2(0.9, 0.9),
+    roughnessMap: textures.concreteRough,
+    roughness: 0.88,
+    metalness: 0.05,
+    envMapIntensity: 0.75,
   });
 
-  const chromeMat = new THREE.MeshStandardMaterial({
-    color: 0xd9e2ec,
-    metalness: 0.96,
-    roughness: 0.16,
-    envMapIntensity: 1.5,
+  const shoulderGroundMat = new THREE.MeshStandardMaterial({
+    color: 0x3b4048,
+    map: textures.concreteDiff,
+    normalMap: textures.concreteNor,
+    normalScale: new THREE.Vector2(0.8, 0.8),
+    roughnessMap: textures.concreteRough,
+    roughness: 0.92,
+    metalness: 0.02,
+    envMapIntensity: 0.5,
   });
 
   const darkAlloyMat = new THREE.MeshStandardMaterial({
-    color: 0x2a3140,
-    metalness: 0.85,
-    roughness: 0.36,
-    envMapIntensity: 1.15,
-  });
-
-  const carbonMat = new THREE.MeshPhysicalMaterial({
-    color: 0x151822,
-    metalness: 0.15,
+    color: 0x222831,
     roughness: 0.42,
-    clearcoat: 0.7,
-    clearcoatRoughness: 0.22,
+    metalness: 0.78,
     envMapIntensity: 1.0,
   });
 
-  const tireRubberMat = new THREE.MeshStandardMaterial({
-    color: 0x0b0c10,
-    metalness: 0.0,
-    roughness: 0.9,
-    envMapIntensity: 0.35,
-  });
-
-  const glassTintedMat = new THREE.MeshPhysicalMaterial({
-    color: 0x8be0ff,
-    metalness: 0.05,
-    roughness: 0.08,
-    transparent: true,
-    opacity: 0.36,
-    clearcoat: 1.0,
-    clearcoatRoughness: 0.05,
-    envMapIntensity: 1.8,
-  });
-
-  const tailLightMat = new THREE.MeshStandardMaterial({
-    color: 0x200404,
-    emissive: 0xff1e38,
-    emissiveIntensity: 3.4,
-    roughness: 0.2,
-  });
-
-  const headLightMat = new THREE.MeshStandardMaterial({
-    color: 0xf8fafc,
-    emissive: 0xdcf4ff,
-    emissiveIntensity: 3.8,
-    roughness: 0.15,
-  });
-
-  const policeRedMat = new THREE.MeshStandardMaterial({
-    color: 0x220408,
-    emissive: 0xff1e42,
-    emissiveIntensity: 4.5,
-    roughness: 0.2,
-  });
-
-  const policeBlueMat = new THREE.MeshStandardMaterial({
-    color: 0x041226,
-    emissive: 0x00a6ff,
-    emissiveIntensity: 4.5,
-    roughness: 0.2,
-  });
-
-  const skyscraperMat = new THREE.MeshStandardMaterial({
-    color: 0x0d1220,
-    map: skyTex,
+  const nightMaps = buildFacadePbrMaps(textures.facadeNight, true, maxAniso);
+  const skyscraperNightMat = new THREE.MeshStandardMaterial({
+    map: textures.facadeNight,
+    normalMap: nightMaps.normalMap,
+    normalScale: new THREE.Vector2(0.55, 0.55),
+    roughnessMap: nightMaps.roughnessMap,
+    roughness: 0.85,
+    metalness: 0.28,
     emissive: 0xffffff,
-    emissiveMap: skyTex,
+    emissiveMap: nightMaps.emissiveMap,
     emissiveIntensity: 1.35,
-    roughness: 0.22,
-    metalness: 0.72,
     envMapIntensity: 1.35,
   });
 
-  const barrierMetalMat = new THREE.MeshStandardMaterial({
-    color: 0x7b8698,
-    metalness: 0.72,
-    roughness: 0.38,
-    envMapIntensity: 1.0,
+  const dayMaps = buildFacadePbrMaps(textures.facadeDay, false, maxAniso);
+  const skyscraperDayMat = new THREE.MeshStandardMaterial({
+    map: textures.facadeDay,
+    normalMap: dayMaps.normalMap,
+    normalScale: new THREE.Vector2(0.55, 0.55),
+    roughnessMap: dayMaps.roughnessMap,
+    roughness: 0.85,
+    metalness: 0.35,
+    envMapIntensity: 1.45,
   });
 
-  const rampUniforms = {
-    uTime: { value: 0 },
-    uColor: { value: new THREE.Color(0x00f0ff) },
-  };
-  const rampMat = new THREE.MeshStandardMaterial({
-    map: rampTex,
-    emissiveMap: rampTex,
+  const highwaySignMat = new THREE.MeshStandardMaterial({
+    map: textures.highwaySigns,
+    roughness: 0.36,
+    metalness: 0.14,
     emissive: 0xffffff,
-    emissiveIntensity: 1.8,
-    roughness: 0.25,
-    metalness: 0.5,
+    emissiveMap: textures.highwaySigns,
+    emissiveIntensity: 0.22,
+    envMapIntensity: 0.9,
   });
-  rampMat.onBeforeCompile = (shader) => {
-    shader.uniforms.uTime = rampUniforms.uTime;
-    shader.uniforms.uColor = rampUniforms.uColor;
-    shader.vertexShader =
-      "varying vec2 vRampUv;\n" +
-      shader.vertexShader.replace("#include <begin_vertex>", "#include <begin_vertex>\n vRampUv = uv;");
-    shader.fragmentShader =
-      "uniform float uTime;\nuniform vec3 uColor;\nvarying vec2 vRampUv;\n" +
-      shader.fragmentShader.replace(
-        "#include <emissivemap_fragment>",
-        `#include <emissivemap_fragment>
-         float wave = smoothstep(0.42, 0.5, fract(vRampUv.y * 3.0 - uTime * 2.2)) * smoothstep(0.58, 0.5, fract(vRampUv.y * 3.0 - uTime * 2.2));
-         totalEmissiveRadiance += uColor * wave * 2.8;
-        `
-      );
-  };
-  rampMat.customProgramCacheKey = () => "redline-ramp-scroll-v1";
+
+  const rampMat = new THREE.MeshStandardMaterial({
+    map: textures.concreteDiff,
+    normalMap: textures.concreteNor,
+    roughnessMap: textures.concreteRough,
+    color: 0xf59e0b,
+    roughness: 0.55,
+    metalness: 0.35,
+  });
 
   const empWaveMat = new THREE.MeshBasicMaterial({
     color: 0x00f0ff,
     transparent: true,
-    opacity: 0.5,
-    side: THREE.DoubleSide,
+    opacity: 0.65,
     blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
     depthWrite: false,
   });
 
-  const contactShadowMat = new THREE.MeshBasicMaterial({
-    map: contactTex,
+  // Grayscale AO shadow map -> MultiplyBlending with premultipliedAlpha makes white transparent!
+  const ferrariAoMat = new THREE.MeshBasicMaterial({
+    map: textures.ferrariAo,
+    color: 0xffffff,
+    blending: THREE.MultiplyBlending,
+    premultipliedAlpha: true,
     transparent: true,
-    opacity: 0.85,
+    opacity: 0.9,
+    toneMapped: false,
     depthWrite: false,
   });
 
-  const makePaintMaterial = (hex: number, emissiveBoost = 0) =>
-    new THREE.MeshPhysicalMaterial({
-      color: hex,
-      metalness: 0.32,
-      roughness: 0.24,
-      clearcoat: 1.0,
-      clearcoatRoughness: 0.08,
-      emissive: emissiveBoost > 0 ? hex : 0x000000,
-      emissiveIntensity: emissiveBoost,
-      envMapIntensity: 1.45,
-    });
+  const jetFlameTex = buildJetFlameTexture();
+  const headlightPoolTex = buildHeadlightPoolTexture();
+  const fireballTex = buildFireballTexture(textures.flame);
 
-  const makeNeonMaterial = (hex: number, intensity = 3.2) =>
+  const makeNeonMaterial = (colorHex: number, emissiveIntensity = 1.6) =>
     new THREE.MeshStandardMaterial({
-      color: hex,
-      emissive: hex,
-      emissiveIntensity: intensity,
-      roughness: 0.2,
+      color: colorHex,
+      emissive: colorHex,
+      emissiveIntensity,
+      roughness: 0.25,
+      metalness: 0.1,
     });
 
   return {
-    highwayTextures,
-    wetAsphaltMat,
     wetAsphaltUniforms,
+    wetAsphaltMat,
+    concreteMat,
     shoulderGroundMat,
-    chromeMat,
     darkAlloyMat,
-    carbonMat,
-    tireRubberMat,
-    glassTintedMat,
-    tailLightMat,
-    headLightMat,
-    policeRedMat,
-    policeBlueMat,
-    skyscraperMat,
-    barrierMetalMat,
+    skyscraperNightMat,
+    skyscraperDayMat,
+    highwaySignMat,
     rampMat,
-    rampUniforms,
     empWaveMat,
-    contactShadowMat,
-    glowSpriteTex,
-    makePaintMaterial,
+    ferrariAoMat,
+    jetFlameTex,
+    headlightPoolTex,
+    fireballTex,
     makeNeonMaterial,
   };
 }

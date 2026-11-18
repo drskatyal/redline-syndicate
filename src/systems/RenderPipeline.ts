@@ -1,10 +1,10 @@
 import * as THREE from "three";
-import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
-import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
-import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
-import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { LoadedAssets } from "../assets/AssetLoader";
 import { QualityPreset } from "../core/SaveState";
 import { StageSpec } from "../data/stages";
 
@@ -34,29 +34,26 @@ const CinematicFinisherShader = {
       float dist = length(offset);
       vec2 dir = dist > 0.0001 ? offset / dist : vec2(0.0);
 
-      // Speed-scaled subtle radial chromatic aberration only near screen edges
-      float caAmt = (0.0008 + uSpeedNorm * 0.0038 + uBulletTime * 0.003) * smoothstep(0.22, 0.72, dist);
+      float caAmt = (0.0005 + uSpeedNorm * 0.0032 + uBulletTime * 0.0028) * smoothstep(0.28, 0.76, dist);
       float r = texture2D(tDiffuse, vUv + dir * caAmt).r;
       float g = texture2D(tDiffuse, vUv).g;
       float b = texture2D(tDiffuse, vUv - dir * caAmt).b;
       vec3 col = vec3(r, g, b);
 
-      // Reflex Bullet-Time cool cyan edge tint
       if (uBulletTime > 0.01) {
         float luma = dot(col, vec3(0.299, 0.587, 0.114));
-        vec3 tinted = mix(col, vec3(luma * 0.65, luma * 1.15, luma * 1.45), 0.42 * uBulletTime);
-        col = mix(tinted, col, smoothstep(0.65, 0.15, dist) * 0.25);
+        vec3 tinted = mix(col, vec3(luma * 0.7, luma * 1.15, luma * 1.42), 0.36 * uBulletTime);
+        col = mix(tinted, col, smoothstep(0.65, 0.15, dist) * 0.3);
       }
 
-      // Impact red pulse on damage/wreck
       if (uDamageFlash > 0.01) {
-        float edgeMask = smoothstep(0.25, 0.75, dist);
-        col = mix(col, vec3(1.0, 0.12, 0.16), uDamageFlash * (0.28 + 0.45 * edgeMask));
+        float edgeMask = smoothstep(0.28, 0.78, dist);
+        col = mix(col, vec3(0.95, 0.12, 0.15), uDamageFlash * (0.22 + 0.42 * edgeMask));
       }
 
-      // Clean Rockstar-style edge vignette (leaves road center clear)
-      float vig = smoothstep(0.92, 0.38, dist);
-      col *= mix(0.68, 1.0, vig);
+      float vig = smoothstep(0.95, 0.42, dist);
+      col *= mix(0.74, 1.0, vig);
+      if (!(col.r >= 0.0 && col.g >= 0.0 && col.b >= 0.0)) col = vec3(0.0);
 
       gl_FragColor = vec4(col, 1.0);
     }
@@ -71,17 +68,11 @@ export class RenderPipeline {
   public readonly ambientLight: THREE.HemisphereLight;
   public readonly rimLight: THREE.DirectionalLight;
 
+  private assets: LoadedAssets | null = null;
   private composer: EffectComposer | null = null;
   private renderTarget: THREE.WebGLRenderTarget | null = null;
   private bloomPass: UnrealBloomPass | null = null;
   private finisherPass: ShaderPass | null = null;
-  private skyMesh: THREE.Mesh;
-  private skyUniforms: {
-    uTop: { value: THREE.Color };
-    uHorizon: { value: THREE.Color };
-    uSunColor: { value: THREE.Color };
-    uSunDir: { value: THREE.Vector3 };
-  };
   private quality: QualityPreset = "ultra";
   private isSoftwareGl = false;
   private width = 1280;
@@ -99,7 +90,7 @@ export class RenderPipeline {
     this.renderer.info.autoReset = false;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 0.98;
+    this.renderer.toneMappingExposure = 1.0;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -109,77 +100,37 @@ export class RenderPipeline {
     this.isSoftwareGl = /swiftshader|llvmpipe|softpipe/i.test(glRenderer);
 
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.FogExp2(0x162040, 0.0017);
+    this.scene.background = new THREE.Color(0x0b101b);
+    this.scene.fog = new THREE.FogExp2(0x162030, 0.00095);
 
-    // Bake IBL environment once for crisp clearcoat / metal / wet puddle reflections
-    const pmrem = new THREE.PMREMGenerator(this.renderer);
-    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    this.scene.environmentIntensity = 0.62;
-    pmrem.dispose();
+    this.camera = new THREE.PerspectiveCamera(62, 16 / 9, 0.2, 900);
 
-    this.camera = new THREE.PerspectiveCamera(68, 16 / 9, 0.25, 950);
-
-    // 3-point exterior lighting stack
-    this.ambientLight = new THREE.HemisphereLight(0x9ec5ff, 0x1a1e2e, 0.85);
+    this.ambientLight = new THREE.HemisphereLight(0xcbe4ff, 0x1e2433, 0.9);
     this.scene.add(this.ambientLight);
 
-    this.sunLight = new THREE.DirectionalLight(0xffb58a, 1.85);
+    this.sunLight = new THREE.DirectionalLight(0xffe6cc, 2.2);
     this.sunLight.castShadow = true;
     this.sunLight.shadow.mapSize.set(1024, 1024);
     this.sunLight.shadow.camera.near = 2;
-    this.sunLight.shadow.camera.far = 140;
-    const d = 28;
+    this.sunLight.shadow.camera.far = 120;
+    const d = 18;
     this.sunLight.shadow.camera.left = -d;
     this.sunLight.shadow.camera.right = d;
     this.sunLight.shadow.camera.top = d;
     this.sunLight.shadow.camera.bottom = -d;
-    this.sunLight.shadow.bias = -0.0005;
+    this.sunLight.shadow.bias = -0.0004;
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target);
 
-    this.rimLight = new THREE.DirectionalLight(0x38bdf8, 0.9);
-    this.rimLight.position.set(18, 14, -22);
+    this.rimLight = new THREE.DirectionalLight(0x38bdf8, 0.85);
+    this.rimLight.position.set(-18, 12, -20);
     this.scene.add(this.rimLight);
 
-    // Custom atmospheric gradient SkyDome + Sun Disc
-    this.skyUniforms = {
-      uTop: { value: new THREE.Color(0x0b102b) },
-      uHorizon: { value: new THREE.Color(0xf43f7d) },
-      uSunColor: { value: new THREE.Color(0xff9966) },
-      uSunDir: { value: new THREE.Vector3(0.25, 0.24, 0.94).normalize() },
-    };
-    this.skyMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(520, 32, 20),
-      new THREE.ShaderMaterial({
-        side: THREE.BackSide,
-        depthWrite: false,
-        fog: false,
-        uniforms: this.skyUniforms,
-        vertexShader: `
-          varying vec3 vDir;
-          void main() {
-            vDir = position;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          }
-        `,
-        fragmentShader: `
-          varying vec3 vDir;
-          uniform vec3 uTop, uHorizon, uSunColor, uSunDir;
-          void main() {
-            vec3 dir = normalize(vDir);
-            float h = clamp(dir.y * 1.15 + 0.08, 0.0, 1.0);
-            vec3 col = mix(uHorizon, uTop, pow(h, 0.62));
-            float sunDot = clamp(dot(dir, normalize(uSunDir)), 0.0, 1.0);
-            col += uSunColor * (pow(sunDot, 520.0) * 1.45 + pow(sunDot, 10.0) * 0.34);
-            gl_FragColor = vec4(col, 1.0);
-          }
-        `,
-      })
-    );
-    this.skyMesh.frustumCulled = false;
-    this.scene.add(this.skyMesh);
-
     this.rebuildComposer();
+  }
+
+  public setAssets(assets: LoadedAssets): void {
+    this.assets = assets;
   }
 
   public getMaxAnisotropy(): number {
@@ -189,9 +140,9 @@ export class RenderPipeline {
   public getTargetDpr(): number {
     if (this.isSoftwareGl) return 1.0;
     const native = window.devicePixelRatio || 1;
-    if (this.quality === "ultra") return Math.min(native * 1.35, 2.5);
-    if (this.quality === "high") return Math.min(native, 2.0);
-    return Math.min(native, 1.25);
+    if (this.quality === "ultra") return Math.min(native * 1.25, 2.0);
+    if (this.quality === "high") return Math.min(native, 1.5);
+    return Math.min(native, 1.0);
   }
 
   public setQuality(preset: QualityPreset): void {
@@ -222,7 +173,6 @@ export class RenderPipeline {
     const w = Math.max(1, Math.floor(this.width * dpr));
     const h = Math.max(1, Math.floor(this.height * dpr));
 
-    // MSAA HalfFloat target keeps 4K/HDR speculars crisp without losing antialiasing
     this.renderTarget = new THREE.WebGLRenderTarget(w, h, {
       type: THREE.HalfFloatType,
       samples: this.isSoftwareGl ? 0 : 4,
@@ -233,11 +183,12 @@ export class RenderPipeline {
 
     this.composer.addPass(new RenderPass(this.scene, this.camera));
 
+    // High threshold keeps daylight asphalt & metallic clearcoat razor crisp while blooming headlights/strobes
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(this.width, this.height),
-      this.quality === "ultra" ? 0.26 : 0.22,
-      0.22,
-      1.08
+      this.quality === "ultra" ? 0.30 : 0.24,
+      0.40,
+      1.18
     );
     this.composer.addPass(this.bloomPass);
 
@@ -266,37 +217,61 @@ export class RenderPipeline {
   }
 
   public applyStageAtmosphere(stage: StageSpec): void {
-    this.skyUniforms.uTop.value.setHex(stage.skyTopHex);
-    this.skyUniforms.uHorizon.value.setHex(stage.skyHorizonHex);
-    this.skyUniforms.uSunColor.value.setHex(stage.sunHex);
-    this.skyUniforms.uSunDir.value
-      .set(stage.isNight ? -0.35 : 0.28, stage.isNight ? 0.34 : 0.22, 0.88)
-      .normalize();
+    const hdrKey =
+      stage.biome === "vice" ? "sunset" : stage.biome === "dubai" || stage.biome === "alpine" ? "sunrise" : "night";
 
-    this.scene.fog = new THREE.FogExp2(stage.fogHex, stage.fogDensity);
-    this.sunLight.color.setHex(stage.sunHex);
-    this.sunLight.intensity = stage.sunIntensity;
-    this.ambientLight.color.setHex(stage.ambientHex);
+    if (this.assets) {
+      const hdr = this.assets.hdr[hdrKey];
+      this.scene.background = hdr.equirect;
+      this.scene.backgroundBlurriness = 0.025;
+      this.scene.environment = hdr.pmrem;
+      this.scene.environmentIntensity = stage.isNight ? 1.15 : 1.05;
+    }
+
+    const fogHex =
+      stage.biome === "vice"
+        ? 0x2a1f2d
+        : stage.biome === "kowloon"
+          ? 0x0b1726
+          : stage.biome === "dubai"
+            ? 0xa48066
+            : stage.biome === "alpine"
+              ? 0x7a99b5
+              : 0x090b16;
+    const fogDens = stage.biome === "dubai" ? 0.00075 : stage.biome === "vice" ? 0.00095 : 0.00105;
+
+    this.scene.fog = new THREE.FogExp2(fogHex, fogDens);
+    this.sunLight.color.setHex(stage.biome === "dubai" ? 0xffe4b5 : stage.isNight ? 0x9ec5ff : 0xffd5ad);
+    this.sunLight.intensity = stage.biome === "vice" ? 1.25 : stage.isNight ? 1.45 : 2.6;
+    this.ambientLight.color.setHex(stage.isNight ? 0x8fb8ff : 0xfce7cf);
     this.ambientLight.groundColor.setHex(stage.groundHex);
-    this.ambientLight.intensity = stage.ambientIntensity;
+    this.ambientLight.intensity = stage.isNight ? 0.78 : 1.05;
     this.rimLight.color.setHex(stage.accentNeonHex);
-    this.renderer.toneMappingExposure = stage.isNight ? 0.96 : 0.92;
+    this.rimLight.intensity = stage.isNight ? 0.9 : 0.45;
+    this.renderer.toneMappingExposure = stage.biome === "dubai" ? 0.92 : stage.biome === "vice" ? 0.95 : stage.isNight ? 1.04 : 1.0;
   }
 
   public applyHangarAtmosphere(): void {
-    this.skyUniforms.uTop.value.setHex(0x050711);
-    this.skyUniforms.uHorizon.value.setHex(0x18132b);
-    this.skyUniforms.uSunColor.value.setHex(0x00f0ff);
-    this.skyUniforms.uSunDir.value.set(-0.4, 0.35, 0.8).normalize();
-    this.scene.fog = new THREE.FogExp2(0x070914, 0.025);
-    this.sunLight.color.setHex(0xe2e8f0);
-    this.sunLight.intensity = 1.65;
-    this.ambientLight.color.setHex(0x94a3b8);
-    this.ambientLight.groundColor.setHex(0x090d16);
-    this.ambientLight.intensity = 0.85;
-    this.rimLight.color.setHex(0x00f0ff);
-    this.rimLight.intensity = 1.45;
-    this.renderer.toneMappingExposure = 0.98;
+    if (this.assets) {
+      const hdr = this.assets.hdr.sunset;
+      this.scene.background = hdr.equirect;
+      this.scene.backgroundBlurriness = 0.045;
+      this.scene.environment = hdr.pmrem;
+      this.scene.environmentIntensity = 1.2;
+    }
+    this.scene.fog = new THREE.FogExp2(0x141924, 0.008);
+    this.sunLight.color.setHex(0xffe6cc);
+    this.sunLight.intensity = 2.1;
+    this.sunLight.position.set(8, 12, 10);
+    this.sunLight.target.position.set(0, 0.5, 0);
+    this.sunLight.target.updateMatrixWorld();
+
+    this.ambientLight.color.setHex(0xcbe4ff);
+    this.ambientLight.groundColor.setHex(0x111827);
+    this.ambientLight.intensity = 0.95;
+    this.rimLight.color.setHex(0x38bdf8);
+    this.rimLight.intensity = 1.1;
+    this.renderer.toneMappingExposure = 1.02;
   }
 
   public updatePostFX(speedNorm: number, bulletTime: number, damageFlash: number): void {
@@ -308,9 +283,8 @@ export class RenderPipeline {
   }
 
   public syncFollowRig(focusX: number, focusY: number, focusZ: number): void {
-    this.skyMesh.position.set(focusX, focusY, focusZ);
-    this.sunLight.position.set(focusX + 24, focusY + 42, focusZ + 18);
-    this.sunLight.target.position.set(focusX, focusY, focusZ + 22);
+    this.sunLight.position.set(focusX + 20, focusY + 34, focusZ + 14);
+    this.sunLight.target.position.set(focusX, focusY, focusZ + 16);
     this.sunLight.target.updateMatrixWorld();
   }
 

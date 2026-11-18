@@ -25,12 +25,16 @@ const MIME_TYPES = {
   ".webp": "image/webp",
   ".woff2": "font/woff2",
   ".wasm": "application/wasm",
+  ".glb": "model/gltf-binary",
+  ".gltf": "model/gltf+json",
+  ".bin": "application/octet-stream",
+  ".hdr": "application/octet-stream",
 };
 
-const COMPRESSIBLE = new Set([".html", ".js", ".mjs", ".css", ".json", ".svg"]);
+const COMPRESSIBLE = new Set([".html", ".js", ".mjs", ".css", ".json", ".svg", ".gltf"]);
 
 function getCacheControl(reqPath) {
-  if (reqPath.startsWith("/assets/")) {
+  if (/^\/(assets|models|pbr|hdr|draco|fx|art)\//.test(reqPath)) {
     return "public, max-age=31536000, immutable";
   }
   return "no-cache";

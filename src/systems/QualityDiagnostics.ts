@@ -34,6 +34,7 @@ declare global {
       triggerEmp: () => void;
       triggerHeliView: () => void;
       addCash: (amount: number) => void;
+      setCameraMode?: (mode: number) => void;
     };
   }
 }

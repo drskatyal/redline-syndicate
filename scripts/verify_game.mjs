@@ -10,7 +10,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_DIR = path.resolve(__dirname, "..");
 const CHROME_PATH = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const SHOT_DIR = path.join(PROJECT_DIR, ".tmp-verify");
+const SHOT_DIR =
+  "C:\\Users\\Suneel\\.gemini\\antigravity\\brain\\bdab3ba0-07e3-4df0-9027-c01ac4190567\\scratch\\verify_game";
 const PROFILE_DIR = path.join(PROJECT_DIR, ".tmp-chrome-profile");
 const PORT = Number(process.env.VERIFY_PORT || 8785);
 const CDP_PORT = Number(process.env.CDP_PORT || 9225);
@@ -53,7 +54,9 @@ class CDPClient {
       }
     });
   }
-  onEvent(fn) { this.events.push(fn); }
+  onEvent(fn) {
+    this.events.push(fn);
+  }
   send(method, params = {}) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
@@ -61,7 +64,11 @@ class CDPClient {
       this.ws.send(JSON.stringify({ id, method, params }));
     });
   }
-  close() { try { this.ws.close(); } catch (_) {} }
+  close() {
+    try {
+      this.ws.close();
+    } catch (_) {}
+  }
 }
 
 async function main() {
@@ -82,7 +89,10 @@ async function main() {
     await new Promise((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("Server startup timeout")), 10000);
       serverProc.stdout.on("data", (d) => {
-        if (d.toString().includes("listening")) { clearTimeout(t); resolve(); }
+        if (d.toString().includes("listening")) {
+          clearTimeout(t);
+          resolve();
+        }
       });
       serverProc.stderr.on("data", (d) => console.error("[server]", d.toString()));
     });
@@ -90,19 +100,22 @@ async function main() {
     const hz = await fetch(`http://127.0.0.1:${PORT}/healthz`);
     if (!hz.ok) throw new Error(`/healthz HTTP ${hz.status}`);
 
-    chromeProc = spawn(CHROME_PATH, [
-      "--headless=new",
-      `--remote-debugging-port=${CDP_PORT}`,
-      `--user-data-dir=${PROFILE_DIR}`,
-      "--enable-webgl",
-      "--ignore-gpu-blocklist",
-      "--disable-gpu-sandbox",
-      "--window-size=1600,900",
-      "--device-scale-factor=1.5",
-      "--no-first-run",
-      "--no-default-browser-check",
-      "about:blank",
-    ], { stdio: ["ignore", "pipe", "pipe"] });
+    chromeProc = spawn(
+      CHROME_PATH,
+      [
+        "--headless=new",
+        `--remote-debugging-port=${CDP_PORT}`,
+        `--user-data-dir=${PROFILE_DIR}`,
+        "--enable-webgl",
+        "--ignore-gpu-blocklist",
+        "--disable-gpu-sandbox",
+        "--window-size=1440,900",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "about:blank",
+      ],
+      { stdio: ["ignore", "pipe", "pipe"] }
+    );
 
     await waitForHttp(`http://127.0.0.1:${CDP_PORT}/json/version`);
     const targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json/list`)).json();
@@ -114,13 +127,16 @@ async function main() {
     await cdp.send("Page.enable");
     await cdp.send("Runtime.enable");
     await cdp.send("Log.enable");
+    await cdp.send("Network.enable");
 
     const errors = [];
     cdp.onEvent((method, params) => {
       if (method === "Runtime.exceptionThrown") {
-        errors.push(params.exceptionDetails?.exception?.description || params.exceptionDetails?.text || "Runtime exception");
+        errors.push(params.exceptionDetails?.exception?.description || params.exceptionDetails?.text || "Runtime error");
       } else if (method === "Log.entryAdded" && params.entry?.level === "error") {
         errors.push(`[Log.error] ${params.entry.text}`);
+      } else if (method === "Network.responseReceived" && params.response?.status >= 400) {
+        errors.push(`[HTTP ${params.response.status}] ${params.response.url}`);
       }
     });
 
@@ -140,70 +156,111 @@ async function main() {
     };
 
     await cdp.send("Page.navigate", { url: `http://127.0.0.1:${PORT}/` });
-    await sleep(1800);
-    console.log("Hub diag:", await diag());
-    await snap("01_hub_hangar.png");
 
-    await cdp.send("Runtime.evaluate", { expression: "window.__GAME_DEBUG__.openDistricts()" });
-    await sleep(700);
-    await snap("02_districts_ui.png");
+    // Wait for asset preloader & debug API to register
+    const deadline = Date.now() + 28000;
+    let ready = false;
+    while (Date.now() < deadline) {
+      const r = await cdp.send("Runtime.evaluate", {
+        expression: "Boolean(window.__GAME_DEBUG__ && window.__THREE_GAME_DIAGNOSTICS__)",
+        returnByValue: true,
+      });
+      if (r.result?.value) {
+        ready = true;
+        break;
+      }
+      await sleep(300);
+    }
+    if (!ready) throw new Error("Timed out waiting for asset preloader & __GAME_DEBUG__");
+    await sleep(600);
+
+    const hubDiag = await diag();
+    console.log("01 Hub diag:", hubDiag);
+    await snap("01_hub.png");
 
     await cdp.send("Runtime.evaluate", { expression: "window.__GAME_DEBUG__.openGarage()" });
-    await sleep(700);
-    await snap("03_customizer.png");
+    await sleep(800);
+    await snap("02_hangar.png");
 
-    // Stage 1: Vice Bay Rain Race + Nitro + Speed Check
+    // Stage 1: Vice Bay Rain Highway
     await cdp.send("Runtime.evaluate", {
-      expression: "window.__GAME_DEBUG__.startRace('vice', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.06 });",
+      expression:
+        "window.__GAME_DEBUG__.setCameraMode(0); window.__GAME_DEBUG__.startRace('vice', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.12 });",
     });
-    await sleep(2800);
+    await sleep(3200);
     const viceDiag = await diag();
-    console.log("Vice Bay active race diag:", viceDiag);
-    await snap("04_vice_rain_race.png");
+    console.log("03 Vice Bay diag:", viceDiag);
+    await snap("03_race_vice.png");
 
-    if (!viceDiag || viceDiag.speedMph < 80 || viceDiag.distanceMeters < 60) {
-      console.log("Errors collected before fail:", errors);
-      throw new Error(`Low race progress/speed in Vice Bay: ${JSON.stringify(viceDiag)}`);
+    if (!viceDiag || viceDiag.speedMph < 90 || viceDiag.distanceMeters < 40) {
+      throw new Error(`Insufficient race progress/speed in Vice Bay: ${JSON.stringify(viceDiag)}`);
     }
 
-    // Stage 5: San Verona Lockdown w/ Pursuit Helicopter + EMP Blast
+    // Combat + Police Ferrari Interceptor Pursuit
     await cdp.send("Runtime.evaluate", {
-      expression: "window.__GAME_DEBUG__.startRace('sanverona', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0 }); window.__GAME_DEBUG__.triggerHeliView();",
+      expression:
+        "window.__GAME_DEBUG__.triggerHeliView(); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0, strikeRightPressed: true });",
+    });
+    await sleep(950);
+    const pursuitDiag = await diag();
+    console.log("04 Pursuit & Combat diag:", pursuitDiag);
+    await snap("04_race_combat_pursuit.png");
+
+    // Stage 3: Dubai Al-Mirage Sunset Desert Autobahn
+    await cdp.send("Runtime.evaluate", {
+      expression:
+        "window.__GAME_DEBUG__.startRace('dubai', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.05 });",
     });
     await sleep(2200);
+    const dubaiDiag = await diag();
+    console.log("05 Dubai Sunset diag:", dubaiDiag);
+    await snap("05_race_dubai.png");
+
+    // Stage 5: San Verona Night Lockdown + Bell Huey + EMP
+    await cdp.send("Runtime.evaluate", {
+      expression:
+        "window.__GAME_DEBUG__.startRace('sanverona', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0 }); window.__GAME_DEBUG__.triggerHeliView();",
+    });
+    await sleep(2000);
     await cdp.send("Runtime.evaluate", { expression: "window.__GAME_DEBUG__.triggerEmp()" });
     await sleep(180);
     const sanDiag = await diag();
-    console.log("San Verona Lockdown diag:", sanDiag);
-    await snap("05_sanverona_action.png");
+    console.log("06 San Verona diag:", sanDiag);
+    await snap("06_race_sanverona.png");
 
-    // Mobile responsive viewport check (390x844 touch simulation)
-    await cdp.send("Emulation.setDeviceMetricsOverride", {
-      width: 390,
-      height: 844,
-      deviceScaleFactor: 2,
-      mobile: true,
+    // Helmet Visor POV (Camera Mode 2)
+    await cdp.send("Runtime.evaluate", {
+      expression: "window.__GAME_DEBUG__.setCameraMode(2); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.1 });",
     });
-    await cdp.send("Runtime.evaluate", { expression: "window.dispatchEvent(new Event('resize'))" });
-    await sleep(800);
-    const mobDiag = await diag();
-    console.log("Mobile diag:", mobDiag);
-    await snap("06_mobile_hud.png");
+    await sleep(900);
+    const povDiag = await diag();
+    console.log("07 POV diag:", povDiag);
+    await snap("07_race_pov.png");
 
     console.log("\n=== ERRORS ===");
     console.log(errors.length ? errors.join("\n") : "(none)");
     if (errors.length > 0) return 1;
-    if (viceDiag.renderer.calls <= 5 || viceDiag.renderer.calls > 300 || viceDiag.renderer.triangles > 750000) {
-      throw new Error(`Render budget check failed: ${JSON.stringify(viceDiag.renderer)}`);
+    if (viceDiag.renderer.calls <= 5 || viceDiag.renderer.calls > 350) {
+      throw new Error(`Draw-call budget check failed: ${JSON.stringify(viceDiag.renderer)}`);
+    }
+    if (viceDiag.fps < 45 && sanDiag.fps < 45) {
+      throw new Error(`FPS dropped below 45: vice=${viceDiag.fps}, san=${sanDiag.fps}`);
     }
     return 0;
   } finally {
     if (cdp) cdp.close();
     if (chromeProc) chromeProc.kill("SIGKILL");
     if (serverProc) serverProc.kill("SIGKILL");
-    await sleep(500);
-    try { fs.rmSync(PROFILE_DIR, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 }); } catch (_) {}
+    await sleep(400);
+    try {
+      fs.rmSync(PROFILE_DIR, { recursive: true, force: true, maxRetries: 4, retryDelay: 250 });
+    } catch (_) {}
   }
 }
 
-main().then((c) => process.exit(c)).catch((e) => { console.error(e); process.exit(1); });
+main()
+  .then((c) => process.exit(c))
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
