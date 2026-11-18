@@ -34,12 +34,13 @@ interface BikerSim {
   isCop: boolean;
   profile?: RivalProfile;
   s: number;
-  laneX: number;
+  laneX: number; // driver-centric lateral offset in meters: - = Left, + = Right
   yOffset: number;
   vy: number;
-  vx: number;
+  vx: number; // lateral velocity in driver-centric coords (+ = Rightward)
   speed: number;
-  lean: number;
+  lean: number; // roll angle rad (+ = lean Right, - = lean Left)
+  pitchOffset: number; // suspension squat/dive pitch
   stamina: number;
   maxStamina: number;
   armor: number;
@@ -47,13 +48,12 @@ interface BikerSim {
   weapon: WeaponId;
   attackCooldown: number;
   attackTimer: number;
-  attackSide: -1 | 0 | 1;
+  attackSide: -1 | 0 | 1; // -1 = Left, +1 = Right
   attackType: "melee" | "kick";
   attackHitDone: boolean;
   crashed: boolean;
   crashTimer: number;
   crashDir: number;
-  empStunTimer: number;
   finished: boolean;
   finishTime: number;
   visual: SuperbikeVisual;
@@ -69,7 +69,9 @@ interface TrafficSim {
   halfLength: number;
   s: number;
   distRolled: number;
-  laneX: number;
+  laneX: number; // - = Left, + = Right
+  latVel: number;
+  yawWobble: number;
   speed: number;
   oncoming: boolean;
   roadblock: boolean;
@@ -176,7 +178,6 @@ export class GameEngine {
   private maxNitro = 100;
   private focus = 100;
   private maxFocus = 100;
-  private empCharge = 100;
   private wantedHeat = 1;
   private multiplier = 1.0;
   private multiplierTimer = 0;
@@ -188,6 +189,7 @@ export class GameEngine {
   private hitstopTimer = 0;
   private takedownSlowMo = 0;
   private damageFlash = 0;
+  private lastPlayerScreenXPct = 50;
   private bannerText = "";
   private bannerTimer = 0;
   private comms: CommsMessage | null = null;
@@ -271,7 +273,7 @@ export class GameEngine {
     outerPad.receiveShadow = true;
     this.hangarGroup.add(outerPad);
 
-    const ringBorder = new THREE.Mesh(new THREE.RingGeometry(6.15, 6.26, 48), this.kit.makeNeonMaterial(0x00f0ff, 1.4));
+    const ringBorder = new THREE.Mesh(new THREE.RingGeometry(6.15, 6.26, 48), this.kit.darkAlloyMat);
     ringBorder.rotation.x = -Math.PI / 2;
     ringBorder.position.y = 0.015;
     this.hangarGroup.add(ringBorder);
@@ -433,12 +435,13 @@ export class GameEngine {
       isPlayer: true,
       isCop: false,
       s: 12,
-      laneX: 0,
+      laneX: 2.1,
       yOffset: 0,
       vy: 0,
       vx: 0,
       speed: 0,
       lean: 0,
+      pitchOffset: 0,
       stamina: 100,
       maxStamina: 100,
       armor: bikeSpec.armor + armorBonus,
@@ -452,17 +455,16 @@ export class GameEngine {
       crashed: false,
       crashTimer: 0,
       crashDir: 1,
-      empStunTimer: 0,
       finished: false,
       finishTime: 0,
       visual: pBike,
       rider: pRider,
-      targetLaneX: 0,
+      targetLaneX: 2.1,
       laneTimer: 0,
     };
     this.racers.push(this.player);
 
-    // 7 High-Poly Rival Superbikes in tight combat pack ahead
+    // 7 Rival Street Riders in combat pack ahead
     RIVALS.slice(0, 7).forEach((profile, idx) => {
       const rBike = createSuperbikeInstance(
         this.assets,
@@ -491,6 +493,7 @@ export class GameEngine {
         vx: 0,
         speed: 0,
         lean: 0,
+        pitchOffset: 0,
         stamina: 95 + this.activeStage.difficulty * 8,
         maxStamina: 95 + this.activeStage.difficulty * 8,
         armor: 120,
@@ -504,7 +507,6 @@ export class GameEngine {
         crashed: false,
         crashTimer: 0,
         crashDir: 1,
-        empStunTimer: 0,
         finished: false,
         finishTime: 0,
         visual: rBike,
@@ -514,15 +516,15 @@ export class GameEngine {
       });
     });
 
-    // High-Poly Supercar & Freight Traffic Pool
-    const kinds: TrafficKind[] = ["exotic", "sedan", "muscle", "truck", "exotic"];
+    // Commuter Sedan, Muscle Coupe, Exotic & Commercial Freight Traffic Pool
+    const kinds: TrafficKind[] = ["sedan", "sedan", "muscle", "truck", "exotic", "sedan"];
     const poolCount = Math.min(7, this.activeStage.trafficDensity);
     for (let i = 0; i < poolCount; i++) {
       const kind = kinds[i % kinds.length];
       const vis = createTrafficVehicleInstance(this.assets, this.kit, kind, i);
       this.raceGroup.add(vis.root);
       const oncoming = i % 2 === 1;
-      const laneX = oncoming ? (i % 4 === 1 ? -4.9 : -1.9) : i % 4 === 0 ? 1.9 : 4.9;
+      const laneX = oncoming ? (i % 4 === 1 ? -4.8 : -1.9) : i % 4 === 0 ? 1.9 : 4.8;
       this.traffic.push({
         id: i,
         kind,
@@ -531,6 +533,8 @@ export class GameEngine {
         s: 110 + i * 48,
         distRolled: 0,
         laneX,
+        latVel: 0,
+        yawWobble: 0,
         speed: oncoming ? -(22 + (i % 3) * 4) : 24 + (i % 4) * 3,
         oncoming,
         roadblock: false,
@@ -541,7 +545,7 @@ export class GameEngine {
       });
     }
 
-    // Active Bell Huey Pursuit Helicopter
+    // Active Highway Patrol Pursuit Helicopter
     this.helicopter = createPursuitHelicopterInstance(this.assets);
     this.helicopter.root.visible = this.activeStage.hasHelicopter;
     this.raceGroup.add(this.helicopter.root);
@@ -550,7 +554,6 @@ export class GameEngine {
     this.nitro = this.maxNitro;
     this.maxFocus = 100 * capMul;
     this.focus = this.maxFocus;
-    this.empCharge = 100;
     this.wantedHeat = this.activeStage.id === "sanverona" ? 3 : 1;
     this.multiplier = 1.0;
     this.multiplierTimer = 0;
@@ -572,22 +575,26 @@ export class GameEngine {
     const boss = BOSS_BIOS[this.activeStage.bossId];
     this.pushComms(boss.name, boss.title, boss.portraitUrl, boss.quote);
 
-    const startPt = this.track.sample(this.player.s);
-    const aheadPt = this.track.sample(this.player.s + 22);
-    this.cameraRig.reset(startPt.x, startPt.y);
+    const pWorld = this.track.toWorld(this.player.s, this.player.laneX);
+    const aheadWorld = this.track.toWorld(this.player.s + 24, this.player.laneX);
+    this.cameraRig.reset(pWorld.yaw, pWorld.y);
     this.track.update(this.player.s, 0);
     this.syncVisuals(0.016, false, false);
-    this.vfx.update(0.016, startPt.x, startPt.y, this.player.s, 0, this.activeStage.hasRain);
-    this.pipeline.syncFollowRig(startPt.x, startPt.y, this.player.s);
+    this.vfx.update(0.016, pWorld.x, pWorld.y, pWorld.z, 0, this.activeStage.hasRain);
+    this.pipeline.syncFollowRig(pWorld.x, pWorld.y, pWorld.z);
     this.cameraRig.updateRace(
       this.pipeline.camera,
       0.016,
-      startPt.x,
-      startPt.y,
-      this.player.s,
-      aheadPt.x,
-      aheadPt.y,
+      pWorld.x,
+      pWorld.y,
+      pWorld.z,
+      pWorld.yaw,
       0,
+      aheadWorld.x,
+      aheadWorld.y,
+      aheadWorld.z,
+      0,
+      false,
       false,
       0,
       this.save.settings.cameraMode,
@@ -641,6 +648,8 @@ export class GameEngine {
       s: Math.max(20, this.player.s + aheadS),
       distRolled: 0,
       laneX: this.player.laneX > 0 ? -3.4 : 3.4,
+      latVel: 0,
+      yawWobble: 0,
       speed: Math.max(46, this.player.speed * 0.96),
       oncoming: false,
       roadblock: false,
@@ -664,7 +673,7 @@ export class GameEngine {
     const lane = existingCops === 0 ? -3.2 : 3.2;
     this.racers.push({
       id: `cop_${Date.now()}_${existingCops}`,
-      name: `APEX-0${existingCops + 1}`,
+      name: `UNIT-0${existingCops + 1}`,
       isPlayer: false,
       isCop: true,
       s: Math.max(20, this.player.s + aheadS),
@@ -674,6 +683,7 @@ export class GameEngine {
       vx: 0,
       speed: Math.max(48, this.player.speed * 0.92),
       lean: 0,
+      pitchOffset: 0,
       stamina: 135,
       maxStamina: 135,
       armor: 150,
@@ -687,7 +697,6 @@ export class GameEngine {
       crashed: false,
       crashTimer: 0,
       crashDir: 1,
-      empStunTimer: 0,
       finished: false,
       finishTime: 0,
       visual: bike,
@@ -711,6 +720,8 @@ export class GameEngine {
         s: sPos,
         distRolled: 0,
         laneX: -4.2,
+        latVel: 0,
+        yawWobble: 0,
         speed: 0,
         oncoming: false,
         roadblock: true,
@@ -727,6 +738,8 @@ export class GameEngine {
         s: sPos,
         distRolled: 0,
         laneX: 5.1,
+        latVel: 0,
+        yawWobble: 0,
         speed: 0,
         oncoming: false,
         roadblock: true,
@@ -738,70 +751,28 @@ export class GameEngine {
     ];
     for (const c of cars) this.traffic.push(c);
     const cross = BOSS_BIOS.cross;
-    this.pushComms(cross.name, cross.title, cross.portraitUrl, "Interceptor barricade deployed ahead! Box that runner in!");
-  }
-
-  public triggerEmp(): void {
-    if (this.screen !== "racing" || !this.player || this.empCharge < 99.5) return;
-    this.empCharge = 0;
-    const pPt = this.track.sample(this.player.s);
-    this.vfx.triggerEmp(pPt.x + this.player.laneX, pPt.y + this.player.yOffset, this.player.s);
-    this.cameraRig.addTrauma(0.55);
-    this.audio.playEmpBlast();
-    this.wantedHeat = Math.min(5, this.wantedHeat + 1);
-
-    let hits = 0;
-    for (const r of this.racers) {
-      if (r.isPlayer || r.crashed || r.finished) continue;
-      if (Math.hypot(r.s - this.player.s, r.laneX - this.player.laneX) <= 24) {
-        r.empStunTimer = 3.2;
-        r.stamina = Math.max(0, r.stamina - 52);
-        r.vx += Math.sign(r.laneX - this.player.laneX || 1) * 7.5;
-        hits++;
-        if (r.stamina <= 0) {
-          this.knockoutRacer(r, Math.sign(r.laneX - this.player.laneX || 1));
-        }
-      }
-    }
-
-    for (const t of this.traffic) {
-      if ((t.roadblock || t.kind === "police") && Math.abs(t.s - this.player.s) <= 26) {
-        const pt = this.track.sample(t.s);
-        this.vfx.spawnExplosion(pt.x + t.laneX, pt.y + 0.6, t.s, 1.4);
-        t.disabledTimer = 8;
-        t.s -= 80;
-        hits++;
-      }
-    }
-
-    if (hits > 0) {
-      const empBonus = hits * 350;
-      this.raceCashEarned += empBonus;
-      this.showBanner(`EMP SHOCKWAVE! x${hits} +$${empBonus}`, 2.0);
-    } else {
-      this.showBanner("EMP PULSE DISCHARGED!", 1.4);
-    }
+    this.pushComms(cross.name, cross.title, cross.portraitUrl, "Patrol barricade deployed ahead! Watch the center gap!");
   }
 
   private knockoutRacer(target: BikerSim, dir: number): void {
     target.crashed = true;
     target.crashTimer = target.isCop ? 4.5 : 3.0;
     target.crashDir = dir || 1;
-    target.speed *= 0.25;
+    target.speed *= 0.28;
     target.stamina = target.maxStamina;
     this.knockoutCount++;
     const bonus = target.isCop ? 750 : 450;
     this.raceCashEarned += bonus;
     this.multiplier = Math.min(10, Number((this.multiplier + 0.5).toFixed(1)));
     this.multiplierTimer = 5.0;
-    this.empCharge = Math.min(100, this.empCharge + 28);
     this.wantedHeat = Math.min(5, Math.max(this.wantedHeat, target.isCop ? 4 : 2));
-    this.hitstopTimer = 0.05;
-    this.takedownSlowMo = 0.38;
-    this.cameraRig.addTrauma(0.7);
+    this.hitstopTimer = 0.04;
+    this.takedownSlowMo = 0.28;
+    this.cameraRig.addTrauma(0.55);
 
-    const pt = this.track.sample(target.s);
-    this.vfx.spawnExplosion(pt.x + target.laneX, pt.y + 0.5, target.s, 1.15);
+    const wp = this.track.toWorld(target.s, target.laneX);
+    this.vfx.spawnBurst(wp.x, wp.y + 0.4, wp.z, 0xffaa00, 26, 12, 1.05);
+    this.vfx.spawnSmoke(wp.x, wp.y + 0.4, wp.z, 5, 1.3);
     this.audio.playCrash();
 
     if (target.profile) {
@@ -809,7 +780,7 @@ export class GameEngine {
       this.showBanner(`TAKEDOWN: ${target.profile.name.toUpperCase()}! +$${bonus}`, 2.1);
       this.pushComms(target.profile.name.toUpperCase(), target.profile.role, target.profile.portraitUrl, target.profile.taunt);
     } else {
-      this.showBanner(`INTERCEPTOR NEUTRALIZED! +$${bonus}`, 2.1);
+      this.showBanner(`PURSUIT UNIT DOWNED! +$${bonus}`, 2.1);
     }
   }
 
@@ -854,6 +825,8 @@ export class GameEngine {
         stageId: this.activeStage.id,
         speedMph: 0,
         distanceMeters: 0,
+        laneOffset: 0,
+        playerScreenXPct: 50,
         rank: 1,
         wantedHeat: 0,
         stamina: 100,
@@ -872,7 +845,7 @@ export class GameEngine {
       if (intent.cameraPressed) {
         this.save.settings.cameraMode = (this.save.settings.cameraMode + 1) % 3;
         persistSave(this.save);
-        const labels = ["CAMERA: DYNAMIC CHASE", "CAMERA: BRAWLER CLOSE", "CAMERA: HELMET VISOR POV"];
+        const labels = ["CAMERA: STREET CHASE", "CAMERA: CLOSE CHASE", "CAMERA: RIDER POV"];
         this.showBanner(labels[this.save.settings.cameraMode], 1.1);
       }
 
@@ -894,6 +867,10 @@ export class GameEngine {
       const simScale = focusActive ? 0.42 : this.takedownSlowMo > 0 ? 0.38 : 1.0;
       const simDt = rawDt * simScale;
       this.stepRace(simDt, rawDt, wallDt, intent, focusActive);
+
+      const pW = this.track.toWorld(this.player.s, this.player.laneX);
+      this.tmpProj.set(pW.x, pW.y + 0.65, pW.z).project(this.pipeline.camera);
+      this.lastPlayerScreenXPct = Number(((this.tmpProj.x * 0.5 + 0.5) * 100).toFixed(2));
     }
 
     const speedMph = this.player ? this.player.speed * MPS_TO_MPH : 0;
@@ -908,6 +885,8 @@ export class GameEngine {
       stageId: this.activeStage.id,
       speedMph: Math.round(speedMph),
       distanceMeters: Math.round(this.player ? this.player.s : 0),
+      laneOffset: this.player ? Number(this.player.laneX.toFixed(3)) : 0,
+      playerScreenXPct: this.lastPlayerScreenXPct,
       rank: this.computePlayerRank(),
       wantedHeat: this.wantedHeat,
       stamina: Math.round(this.player ? this.player.stamina : 100),
@@ -933,23 +912,27 @@ export class GameEngine {
         this.audio.playTone(440, 0.14, 0.28);
       } else if (this.countdownTimer <= 0 && prevCount > 0) {
         this.audio.playTone(880, 0.24, 0.35);
-        this.showBanner("REDLINE! BURN THE DECK!", 1.4);
+        this.showBanner("GO! SPLIT THE LANES!", 1.4);
       }
-      const pPt = this.track.sample(this.player.s);
-      const aheadPt = this.track.sample(this.player.s + 22);
+      const pWorld = this.track.toWorld(this.player.s, this.player.laneX);
+      const aheadWorld = this.track.toWorld(this.player.s + 24, this.player.laneX);
       this.track.update(this.player.s, this.totalElapsed);
       this.syncVisuals(rawDt, false, false);
-      this.vfx.update(rawDt, pPt.x + this.player.laneX, pPt.y + this.player.yOffset, this.player.s, 0, this.activeStage.hasRain);
-      this.pipeline.syncFollowRig(pPt.x + this.player.laneX, pPt.y, this.player.s);
+      this.vfx.update(rawDt, pWorld.x, pWorld.y, pWorld.z, 0, this.activeStage.hasRain);
+      this.pipeline.syncFollowRig(pWorld.x, pWorld.y, pWorld.z);
       this.cameraRig.updateRace(
         this.pipeline.camera,
         rawDt,
-        pPt.x + this.player.laneX,
-        pPt.y + this.player.yOffset,
-        this.player.s,
-        aheadPt.x,
-        aheadPt.y,
+        pWorld.x,
+        pWorld.y,
+        pWorld.z,
+        pWorld.yaw,
         0,
+        aheadWorld.x,
+        aheadWorld.y,
+        aheadWorld.z,
+        0,
+        false,
         false,
         0,
         this.save.settings.cameraMode,
@@ -972,71 +955,85 @@ export class GameEngine {
 
     const p = this.player;
     const baseMaxMps = bikeSpec.topSpeedMph * turbineMul * 0.44704;
-    const nitroActive = intent.nitro && this.nitro > 1 && !p.crashed && (intent.throttle || p.speed > 20);
+    const nitroActive = intent.nitro && this.nitro > 1 && !p.crashed && (intent.throttle || p.speed > 18);
     if (nitroActive) {
       this.nitro = Math.max(0, this.nitro - rawDt * 22);
     } else {
       this.nitro = Math.min(this.maxNitro, this.nitro + rawDt * 5.5 * capMul);
     }
 
-    if (intent.empPressed) {
-      this.triggerEmp();
-    }
-
     const trackPt = this.track.sample(p.s);
-    const maxSpeed = nitroActive ? baseMaxMps * 1.26 : baseMaxMps;
+    const maxSpeed = nitroActive ? baseMaxMps * 1.24 : baseMaxMps;
     if (p.crashed) {
       p.crashTimer -= rawDt;
-      p.speed = Math.max(0, p.speed - 38 * rawDt);
-      p.laneX = Math.max(-PLAYABLE_HALF_WIDTH, Math.min(PLAYABLE_HALF_WIDTH, p.laneX + p.vx * dt));
-      p.vx *= Math.exp(-3.5 * dt);
-      if (p.speed > 10 && Math.random() < 0.45) {
-        this.vfx.spawnSmoke(trackPt.x + p.laneX, trackPt.y + 0.25, p.s, 2, 1.1);
+      p.speed = Math.max(0, p.speed - 36 * rawDt);
+      p.laneX = Math.max(-SHOULDER_LIMIT, Math.min(SHOULDER_LIMIT, p.laneX + p.vx * dt));
+      p.vx *= Math.exp(-3.6 * dt);
+      p.pitchOffset += (0 - p.pitchOffset) * (1 - Math.exp(-8 * rawDt));
+      if (p.speed > 8 && Math.random() < 0.55) {
+        const wCrash = this.track.toWorld(p.s, p.laneX);
+        this.vfx.spawnBurst(wCrash.x, wCrash.y + 0.12, wCrash.z, 0xffaa00, 3, 7, 0.7);
+        this.vfx.spawnSmoke(wCrash.x, wCrash.y + 0.25, wCrash.z, 2, 1.0);
       }
       if (p.crashTimer <= 0) {
         p.crashed = false;
         p.stamina = p.maxStamina;
-        p.speed = 24;
+        p.speed = 22;
         p.vx = 0;
+        p.lean = 0;
         p.laneX = Math.max(-5.5, Math.min(5.5, p.laneX));
-        this.showBanner("BACK ON THE THROTTLE!", 1.2);
+        this.showBanner("BACK ON THE GAS!", 1.2);
       }
     } else {
+      const lowTorque = p.speed < maxSpeed * 0.55 ? 1.48 : 0.92;
       const accelPush = nitroActive
-        ? bikeSpec.accel * turbineMul * 1.8
+        ? bikeSpec.accel * turbineMul * 1.72
         : intent.throttle
-          ? bikeSpec.accel * turbineMul
+          ? bikeSpec.accel * turbineMul * lowTorque
           : 0;
-      const brakePull = intent.brake ? 52 : 0;
-      const drag = p.speed * p.speed * (accelPush > 0 ? 0.0022 : 0.0046);
-      const offroadPenalty = Math.abs(p.laneX) > PLAYABLE_HALF_WIDTH ? 0.72 : 1.0;
+      const brakePull = intent.brake ? 54 : 0;
+      const engineBrake = !intent.throttle && !intent.brake ? 5.2 + p.speed * 0.14 : 0;
+      const aeroDrag = p.speed * p.speed * 0.0018;
+      const offroadPenalty = Math.abs(p.laneX) > PLAYABLE_HALF_WIDTH ? 0.8 : 1.0;
 
-      p.speed = Math.max(0, Math.min(maxSpeed * offroadPenalty, p.speed + (accelPush - brakePull - drag * 0.55) * dt));
-      if (p.speed < maxSpeed * 0.5 && accelPush > 0) {
-        p.speed += accelPush * 0.4 * dt;
-      }
+      p.speed = Math.max(
+        0,
+        Math.min(maxSpeed * offroadPenalty, p.speed + (accelPush - brakePull - engineBrake - aeroDrag) * dt)
+      );
 
-      const steerStep = (focusActive ? rawDt : dt) * 14.2 * bikeSpec.handling * gripMul * (0.45 + 0.55 * Math.min(1, p.speed / 45));
-      p.laneX += intent.steer * steerStep + p.vx * dt;
-      p.vx *= Math.exp(-5.0 * dt);
+      // Weight-transfer chassis squat/dive
+      const targetPitch = intent.brake ? 0.075 : accelPush > 15 ? -0.055 : 0;
+      p.pitchOffset += (targetPitch - p.pitchOffset) * (1 - Math.exp(-10 * rawDt));
 
-      const targetLean = intent.steer * 0.68 * (0.35 + 0.65 * Math.min(1, p.speed / 55));
-      p.lean += (targetLean - p.lean) * (1 - Math.exp(-11 * rawDt));
+      // Real human steering & centrifugal curve physics (no bot auto-tracking around corners!)
+      const steerDt = focusActive ? rawDt : dt;
+      const speedFactor = 0.35 + 0.65 * Math.min(1, p.speed / 46);
+      const targetLean = intent.steer * 0.58 * speedFactor;
+      const leanRate = Math.abs(intent.steer) > 0.05 ? 11.5 : 8.5;
+      p.lean += (targetLean - p.lean) * (1 - Math.exp(-leanRate * (focusActive ? rawDt : dt)));
+
+      // Positive d2xDs2 means road bends Left (+X) -> outward centrifugal push is Right (+rightOffset)
+      const centrifugalAccel = trackPt.d2xDs2 * p.speed * p.speed * 0.62;
+      const carveAccel = (p.lean / 0.58) * 32 * bikeSpec.handling * gripMul + intent.steer * 14 * bikeSpec.handling;
+      p.vx += (carveAccel + centrifugalAccel - p.vx * 4.8) * steerDt;
+      p.laneX += p.vx * steerDt;
 
       if (Math.abs(p.laneX) > SHOULDER_LIMIT) {
-        p.laneX = Math.sign(p.laneX) * SHOULDER_LIMIT;
-        p.vx = -Math.sign(p.laneX) * 5.2;
-        if (p.speed > 38) {
-          this.vfx.spawnBurst(trackPt.x + p.laneX, trackPt.y + 0.5, p.s, 0xffaa00, 12, 8, 0.9);
-          this.vfx.spawnSmoke(trackPt.x + p.laneX, trackPt.y + 0.3, p.s, 2, 0.9);
-          this.cameraRig.addTrauma(0.24);
-          p.speed *= 0.88;
+        const wallSign = Math.sign(p.laneX);
+        p.laneX = wallSign * SHOULDER_LIMIT;
+        p.vx = -wallSign * 4.2;
+        if (p.speed > 32) {
+          const wScrape = this.track.toWorld(p.s, p.laneX);
+          this.vfx.spawnBurst(wScrape.x, wScrape.y + 0.45, wScrape.z, 0xffaa00, 10, 8, 0.85);
+          this.vfx.spawnSmoke(wScrape.x, wScrape.y + 0.25, wScrape.z, 2, 0.85);
+          this.cameraRig.addTrauma(0.22);
+          p.speed *= 0.90;
         }
       }
 
-      // Hard corner / heavy brake tire smoke plume
-      if ((Math.abs(p.lean) > 0.46 || intent.brake) && p.speed > 32 && Math.random() < 0.35) {
-        this.vfx.spawnSmoke(trackPt.x + p.laneX, trackPt.y + 0.12, p.s - 0.7, 1, 0.75);
+      if ((Math.abs(p.lean) > 0.48 || intent.brake) && p.speed > 30 && Math.random() < 0.3) {
+        const wTire = this.track.toWorld(p.s - 0.65, p.laneX);
+        this.vfx.spawnSmoke(wTire.x, wTire.y + 0.1, wTire.z, 1, 0.72);
       }
 
       for (const r of this.racers) {
@@ -1045,21 +1042,9 @@ export class GameEngine {
           this.nitro = Math.min(this.maxNitro, this.nitro + 10 * dt);
         }
       }
-
-      for (const pad of this.track.pads) {
-        if (Math.abs(p.s - pad.s) < 2.6 && Math.abs(p.laneX - pad.laneX) < 1.9) {
-          if (pad.kind === "nitro" && this.nitro < this.maxNitro) {
-            this.nitro = Math.min(this.maxNitro, this.nitro + 36);
-            p.speed = Math.min(baseMaxMps * 1.3, p.speed + 16);
-            this.audio.playTone(920, 0.14, 0.25);
-          } else if (pad.kind === "emp" && this.empCharge < 100) {
-            this.empCharge = Math.min(100, this.empCharge + 45);
-            this.audio.playTone(740, 0.14, 0.25);
-          }
-        }
-      }
     }
 
+    const prevPlayerS = p.s;
     p.s += p.speed * dt;
     this.stepVerticalJump(p, dt);
 
@@ -1083,12 +1068,12 @@ export class GameEngine {
       }
     }
 
-    // Spawn Biker Cops, Police Ferrari Interceptors, and Roadblocks
+    // Spawn Highway Patrol Motor Units & Squad Cars
     if (p.s > this.activeStage.copThresholdMeters && this.wantedHeat < 2) {
       this.wantedHeat = 2;
       this.spawnCopUnit(18);
       this.spawnPoliceInterceptor(28);
-      this.pushComms(BOSS_BIOS.cross.name, BOSS_BIOS.cross.title, BOSS_BIOS.cross.portraitUrl, "Apex Interceptor Supercars dispatched! Box that runner in!");
+      this.pushComms(BOSS_BIOS.cross.name, BOSS_BIOS.cross.title, BOSS_BIOS.cross.portraitUrl, "Patrol units closing in! Cut the throttle!");
     }
     if (this.wantedHeat >= 2) {
       if (this.racers.filter((r) => r.isCop && !r.crashed).length === 0) {
@@ -1136,19 +1121,24 @@ export class GameEngine {
           a.vx += push * 2.8;
           b.vx -= push * 2.8;
           if (a.isPlayer || b.isPlayer) {
-            const pt = this.track.sample(p.s);
-            this.vfx.spawnBurst(pt.x + p.laneX, pt.y + 0.7, p.s, 0xffaa00, 6, 6, 0.8);
+            const wRub = this.track.toWorld(p.s, p.laneX);
+            this.vfx.spawnBurst(wRub.x, wRub.y + 0.7, wRub.z, 0xffaa00, 6, 6, 0.8);
           }
         }
       }
     }
 
-    // Traffic & Active Police Ferrari Pursuit AI
+    // Traffic & Realistic Physical Car Collisions (side-swipes push cars & scrape; direct slams jolt vehicles & lowside bike)
     for (const t of this.traffic) {
       if (t.disabledTimer > 0) t.disabledTimer = Math.max(0, t.disabledTimer - dt);
+      const prevCarS = t.s;
+
+      t.laneX = Math.max(-PLAYABLE_HALF_WIDTH, Math.min(PLAYABLE_HALF_WIDTH, t.laneX + t.latVel * dt));
+      t.latVel *= Math.exp(-4.5 * dt);
+      t.yawWobble *= Math.exp(-5.8 * dt);
+
       if (t.kind === "police" && !t.roadblock) {
         if (t.disabledTimer <= 0) {
-          // Police Ferrari actively matches player speed & sideswipes nearby
           const targetSpd = Math.min(72, Math.max(40, p.speed + (p.s - t.s) * 0.65));
           t.speed += (targetSpd - t.speed) * (1 - Math.exp(-3.2 * dt));
           t.s += t.speed * dt;
@@ -1156,21 +1146,24 @@ export class GameEngine {
           const desiredX = Math.abs(t.s - p.s) < 16 ? p.laneX + (p.laneX > 0 ? -2.3 : 2.3) : Math.sin(this.totalElapsed + t.id) * 3.5;
           t.laneX += Math.max(-1, Math.min(1, desiredX - t.laneX)) * 5.2 * dt;
 
-          // Heavy Kick or Melee into Police Interceptor can slam & destroy it!
+          // Side Kick / Melee PIT slam into cruiser pushes it sideways off the highway!
           if (!p.crashed && p.attackTimer > 0 && Math.abs(p.s - t.s) < 3.2 && Math.abs(p.laneX - t.laneX) < 3.0) {
+            const pitSide = Math.sign(t.laneX - p.laneX || p.attackSide || 1);
             t.hp -= 55;
-            const pt = this.track.sample(t.s);
-            this.vfx.spawnBurst(pt.x + t.laneX, pt.y + 0.6, t.s, 0x00f0ff, 22, 12, 1.2);
+            t.latVel = pitSide * 7.5;
+            t.yawWobble = pitSide * 0.34;
+            const wCop = this.track.toWorld(t.s, t.laneX);
+            this.vfx.spawnBurst(wCop.x, wCop.y + 0.6, wCop.z, 0xffaa00, 18, 11, 1.0);
+            this.vfx.spawnSmoke(wCop.x, wCop.y + 0.3, wCop.z, 3, 1.0);
             if (t.hp <= 0) {
               t.disabledTimer = 10;
               t.s -= 80;
               this.knockoutCount++;
               this.raceCashEarned += 750;
-              this.takedownSlowMo = 0.42;
-              this.cameraRig.addTrauma(0.75);
-              this.vfx.spawnExplosion(pt.x + t.laneX, pt.y + 0.7, t.s + 80, 1.45);
+              this.takedownSlowMo = 0.25;
+              this.cameraRig.addTrauma(0.55);
               this.audio.playCrash();
-              this.showBanner("INTERCEPTOR SUPERCAR WRECKED! +$750", 2.1);
+              this.showBanner("PURSUIT CRUISER SPUN OUT! +$750", 2.1);
             }
           }
         }
@@ -1180,9 +1173,13 @@ export class GameEngine {
         if (t.s < p.s - 35) {
           t.s = p.s + 260 + Math.random() * 140;
           t.nearMissed = false;
+          t.latVel = 0;
+          t.yawWobble = 0;
         } else if (t.s > p.s + 420) {
           t.s = p.s + 240 + Math.random() * 140;
           t.nearMissed = false;
+          t.latVel = 0;
+          t.yawWobble = 0;
         }
       }
 
@@ -1197,15 +1194,41 @@ export class GameEngine {
           this.raceCashEarned += bonus;
           this.nitro = Math.min(this.maxNitro, this.nitro + 12);
           this.focus = Math.min(this.maxFocus, this.focus + 10);
-          this.empCharge = Math.min(100, this.empCharge + 10);
           this.audio.playNearMiss();
           this.showBanner(`NEAR MISS! x${this.multiplier.toFixed(1)} +$${bonus}`, 1.1);
         }
       }
 
-      if (!p.crashed && p.yOffset < 1.35 && Math.abs(p.s - t.s) < t.halfLength + 0.85) {
+      if (!p.crashed && t.disabledTimer <= 0 && p.yOffset < 1.35 && Math.abs(p.s - t.s) < t.halfLength + 0.85) {
         if (Math.abs(p.laneX - t.laneX) < t.halfWidth + 0.42) {
-          this.triggerPlayerCrash(Math.sign(p.laneX - t.laneX || 1), 24);
+          const hitSide = Math.sign(p.laneX - t.laneX || (p.laneX > 0 ? -1 : 1));
+          const relSpeed = Math.abs(p.speed - t.speed);
+          const wasAlongside = Math.abs(prevPlayerS - prevCarS) < t.halfLength + 0.35;
+          const wHit = this.track.toWorld(p.s, (p.laneX + t.laneX) * 0.5);
+
+          if (wasAlongside || relSpeed < 13) {
+            // Glancing door-scrape / side-swipe: bounce cleanly apart, rock the car, sparks & tire chirp
+            p.laneX = t.laneX + hitSide * (t.halfWidth + 0.48);
+            p.vx = hitSide * 6.8;
+            t.latVel = -hitSide * 3.8;
+            t.yawWobble = -hitSide * 0.16;
+            p.speed *= 0.86;
+            p.armor = Math.max(0, p.armor - 6);
+            this.damageFlash = Math.max(this.damageFlash, 0.38);
+            this.vfx.spawnBurst(wHit.x, wHit.y + 0.6, wHit.z, 0xffaa00, 14, 9, 0.85);
+            this.vfx.spawnSmoke(wHit.x, wHit.y + 0.35, wHit.z, 3, 0.9);
+            this.cameraRig.addTrauma(0.28);
+            this.audio.playStrike(true);
+            this.showBanner("GLANCING IMPACT!", 0.9);
+          } else {
+            // Heavy bumper impact: physically jolt & swerve the struck vehicle, lowside the bike cleanly without fireballs
+            if (!t.roadblock) {
+              t.speed = Math.max(-28, t.speed + (p.speed - t.speed) * 0.24);
+            }
+            t.latVel = -hitSide * 4.8;
+            t.yawWobble = -hitSide * 0.26;
+            this.triggerPlayerCrash(hitSide, 22);
+          }
         }
       }
     }
@@ -1239,20 +1262,24 @@ export class GameEngine {
     this.track.update(p.s, this.totalElapsed);
     this.syncVisuals(rawDt, nitroActive, intent.brake);
 
-    const pPt = this.track.sample(p.s);
-    const aheadPt = this.track.sample(p.s + 22);
-    this.vfx.update(rawDt, pPt.x + p.laneX, pPt.y + p.yOffset, p.s, p.speed, this.activeStage.hasRain);
-    this.pipeline.syncFollowRig(pPt.x + p.laneX, pPt.y, p.s);
+    const pWorld = this.track.toWorld(p.s, p.laneX);
+    const aheadWorld = this.track.toWorld(p.s + 24, p.laneX * 0.45);
+    this.vfx.update(rawDt, pWorld.x, pWorld.y, pWorld.z, p.speed, this.activeStage.hasRain);
+    this.pipeline.syncFollowRig(pWorld.x, pWorld.y, pWorld.z);
     this.cameraRig.updateRace(
       this.pipeline.camera,
       rawDt,
-      pPt.x + p.laneX,
-      pPt.y + p.yOffset,
-      p.s,
-      aheadPt.x,
-      aheadPt.y,
+      pWorld.x,
+      pWorld.y + p.yOffset,
+      pWorld.z,
+      pWorld.yaw,
+      p.vx,
+      aheadWorld.x,
+      aheadWorld.y,
+      aheadWorld.z,
       Math.min(1, p.speed / (bikeSpec.topSpeedMph * 0.44704)),
       nitroActive,
+      intent.brake,
       p.lean,
       this.save.settings.cameraMode,
       this.totalElapsed
@@ -1280,8 +1307,8 @@ export class GameEngine {
       if (r.yOffset <= rampY) {
         if (r.isPlayer && r.vy < -5.5) {
           this.cameraRig.addTrauma(0.25);
-          const pt = this.track.sample(r.s);
-          this.vfx.spawnBurst(pt.x + r.laneX, pt.y + 0.2, r.s, 0xffaa00, 12, 7, 1.0);
+          const wp = this.track.toWorld(r.s, r.laneX);
+          this.vfx.spawnBurst(wp.x, wp.y + 0.2, wp.z, 0xffaa00, 12, 7, 1.0);
         }
         r.yOffset = rampY;
         r.vy = 0;
@@ -1294,13 +1321,6 @@ export class GameEngine {
     if (r.attackTimer > 0) {
       r.attackTimer = Math.max(0, r.attackTimer - dt);
       if (r.attackTimer <= 0) r.attackSide = 0;
-    }
-
-    if (r.empStunTimer > 0) {
-      r.empStunTimer -= dt;
-      r.speed *= Math.exp(-1.5 * dt);
-      r.s += r.speed * dt;
-      return;
     }
 
     if (r.crashed) {
@@ -1412,8 +1432,8 @@ export class GameEngine {
         target.stamina = Math.max(0, target.stamina - damage);
         target.vx += attacker.attackSide * knockback;
 
-        const pt = this.track.sample(target.s);
-        this.vfx.spawnBurst(pt.x + target.laneX, pt.y + 0.9, target.s, 0x00f0ff, 16, 10, 1.0);
+        const wHit = this.track.toWorld(target.s, target.laneX);
+        this.vfx.spawnBurst(wHit.x, wHit.y + 0.9, wHit.z, 0xffaa00, 14, 10, 0.95);
 
         if (target.isPlayer) {
           this.damageFlash = 0.7;
@@ -1423,7 +1443,7 @@ export class GameEngine {
             this.triggerPlayerCrash(attacker.attackSide, 18);
           }
         } else {
-          this.cameraRig.addTrauma(0.32);
+          this.cameraRig.addTrauma(0.3);
           this.hitstopTimer = 0.03;
           if (target.stamina <= 0) {
             this.knockoutRacer(target, attacker.attackSide);
@@ -1441,20 +1461,21 @@ export class GameEngine {
   private triggerPlayerCrash(dir: number, armorDamage: number): void {
     const p = this.player;
     p.crashed = true;
-    p.crashTimer = 2.0;
+    p.crashTimer = 1.9;
     p.crashDir = dir;
     p.vx = dir * 4.5;
     p.speed *= 0.25;
     p.armor = Math.max(0, p.armor - armorDamage);
     this.multiplier = 1.0;
     this.damageFlash = 1.0;
-    this.hitstopTimer = 0.05;
-    this.cameraRig.addTrauma(0.85);
+    this.hitstopTimer = 0.04;
+    this.cameraRig.addTrauma(0.75);
     this.audio.playCrash();
 
-    const pt = this.track.sample(p.s);
-    this.vfx.spawnExplosion(pt.x + p.laneX, pt.y + 0.5, p.s, 1.25);
-    this.showBanner(p.armor <= 0 ? "CHASSIS TOTALED!" : "WIPEOUT! HOLD LINE!", 1.8);
+    const wp = this.track.toWorld(p.s, p.laneX);
+    this.vfx.spawnBurst(wp.x, wp.y + 0.45, wp.z, 0xffaa00, 26, 12, 1.0);
+    this.vfx.spawnSmoke(wp.x, wp.y + 0.4, wp.z, 5, 1.25);
+    this.showBanner(p.armor <= 0 ? "BIKE TOTALED!" : "LOWSIDE! HOLD THE LINE!", 1.8);
   }
 
   private finishRace(outcome: "finished" | "wrecked" | "busted"): void {
@@ -1524,7 +1545,7 @@ export class GameEngine {
 
   private syncVisuals(dt: number, playerNitro: boolean, playerBraking: boolean): void {
     for (const r of this.racers) {
-      const visible = r.isPlayer || (r.s > this.player.s - 16 && r.s < this.player.s + 155);
+      const visible = r.isPlayer || (r.s > this.player.s - 14 && r.s < this.player.s + 130);
       r.visual.root.visible = visible;
       if (!visible) continue;
       // Only player bike casts expensive dynamic PCFSoft shadow; rivals use grounded Multiply AO contact shadows
@@ -1536,18 +1557,18 @@ export class GameEngine {
           if (m.isMesh && m.material !== this.kit.ferrariAoMat) m.castShadow = castSh;
         });
       }
-      const pt = this.track.sample(r.s);
-      r.visual.root.position.set(pt.x + r.laneX, pt.y + r.yOffset, r.s);
-      const yaw = Math.atan2(pt.dxDs, 1);
-      const pitch = -Math.atan2(pt.dyDs, 1);
-      r.visual.root.rotation.set(pitch, yaw, 0);
+      const wp = this.track.toWorld(r.s, r.laneX);
+      r.visual.root.position.set(wp.x, wp.y + r.yOffset, wp.z);
+      r.visual.root.rotation.set(wp.pitch, wp.yaw, 0);
 
       if (r.crashed) {
-        r.visual.chassisPivot.rotation.z = -r.crashDir * 1.15;
-        r.visual.chassisPivot.position.y = 0.25;
+        r.visual.chassisPivot.rotation.set(0, 0, r.crashDir * 1.28);
+        r.visual.chassisPivot.position.y = 0.24;
       } else {
-        r.visual.chassisPivot.rotation.z = -r.lean;
+        // Right-hand rule around +Z tilts top (+Y) toward -X (Screen Right) when rotation.z > 0
+        r.visual.chassisPivot.rotation.set(r.pitchOffset, 0, r.lean);
         r.visual.chassisPivot.position.y = 0;
+        r.visual.frontWheelPivot.rotation.y = -r.lean * 0.28;
       }
 
       const showFlame = r.isPlayer ? playerNitro : r.speed > 62;
@@ -1556,7 +1577,7 @@ export class GameEngine {
       const dur = r.attackType === "kick" ? 0.24 : WEAPONS[r.weapon].swingDuration;
       const prog = r.attackTimer > 0 ? 1 - r.attackTimer / dur : 0;
       r.rider.updatePose(
-        r.lean / 0.68,
+        r.lean / 0.58,
         Math.min(1, r.speed / 85),
         prog,
         r.attackSide,
@@ -1566,7 +1587,7 @@ export class GameEngine {
     }
 
     for (const t of this.traffic) {
-      const visible = t.disabledTimer <= 0 && t.s > this.player.s - 16 && t.s < this.player.s + 165;
+      const visible = t.disabledTimer <= 0 && t.s > this.player.s - 14 && t.s < this.player.s + 140;
       t.visual.root.visible = visible;
       if (!visible) continue;
       const castCarSh = t.s - this.player.s > -5 && t.s - this.player.s < 22 && t.kind === "police";
@@ -1577,10 +1598,10 @@ export class GameEngine {
           if (m.isMesh && m.material !== this.kit.ferrariAoMat) m.castShadow = castCarSh;
         });
       }
-      const pt = this.track.sample(t.s);
-      t.visual.root.position.set(pt.x + t.laneX, pt.y, t.s);
-      const yaw = Math.atan2(pt.dxDs, 1) + (t.oncoming ? Math.PI : t.roadblock ? Math.PI / 2 : 0);
-      t.visual.root.rotation.set(0, yaw, 0);
+      const wt = this.track.toWorld(t.s, t.laneX);
+      t.visual.root.position.set(wt.x, wt.y, wt.z);
+      const baseYaw = wt.yaw + (t.oncoming ? Math.PI : t.roadblock ? Math.PI / 2 : 0);
+      t.visual.root.rotation.set(0, baseYaw + t.yawWobble, 0);
       t.visual.spinWheels(t.distRolled);
       if (t.kind === "police") {
         t.visual.setStrobe(this.totalElapsed, true);
@@ -1589,12 +1610,11 @@ export class GameEngine {
 
     if (this.helicopter && this.helicopter.root.visible) {
       const hS = this.player.s + 24;
-      const pt = this.track.sample(hS);
-      const hoverX = pt.x + Math.sin(this.totalElapsed * 1.1) * 5.5;
-      const hoverY = pt.y + 18 + Math.sin(this.totalElapsed * 1.9) * 1.0;
-      this.helicopter.root.position.set(hoverX, hoverY, hS);
-      this.helicopter.root.rotation.set(0.16, Math.PI, Math.sin(this.totalElapsed * 1.1) * 0.14);
-      this.helicopter.update(dt, this.totalElapsed, pt.y);
+      const wh = this.track.toWorld(hS, Math.sin(this.totalElapsed * 1.1) * 4.5);
+      const hoverY = wh.y + 18 + Math.sin(this.totalElapsed * 1.9) * 1.0;
+      this.helicopter.root.position.set(wh.x, hoverY, wh.z);
+      this.helicopter.root.rotation.set(0.16, wh.yaw + Math.PI, Math.sin(this.totalElapsed * 1.1) * 0.14);
+      this.helicopter.update(dt, this.totalElapsed, wh.y);
     }
   }
 
@@ -1615,8 +1635,8 @@ export class GameEngine {
         }
         // Project close combat-range rival bikes to screen HUD reticles
         if (this.screen === "racing" && dz > -1.5 && dz < 14 && targetReticles.length < 3) {
-          const pt = this.track.sample(r.s);
-          this.tmpProj.set(pt.x + r.laneX, pt.y + r.yOffset + 1.55, r.s);
+          const wp = this.track.toWorld(r.s, r.laneX);
+          this.tmpProj.set(wp.x, wp.y + r.yOffset + 1.55, wp.z);
           this.tmpProj.project(this.pipeline.camera);
           if (this.tmpProj.z < 1) {
             const xPct = (this.tmpProj.x * 0.5 + 0.5) * 100;
@@ -1661,7 +1681,7 @@ export class GameEngine {
       armorNorm: p ? p.armor / p.maxArmor : 1,
       nitroNorm: this.maxNitro > 0 ? this.nitro / this.maxNitro : 1,
       focusNorm: this.maxFocus > 0 ? this.focus / this.maxFocus : 1,
-      empNorm: this.empCharge / 100,
+      empNorm: 0,
       focusActive: !!(intent && intent.bulletTime && this.focus > 4 && !p?.crashed),
       nitroActive: !!(intent && intent.nitro && this.nitro > 1 && !p?.crashed && speedMph > 20),
       weapon: p ? p.weapon : "knuckle",
@@ -1688,7 +1708,23 @@ export class GameEngine {
       openDistricts: () => this.setScreen("districts"),
       setQuality: (q) => this.setQualityPreset(q),
       setBotInput: (intent) => this.input.setBotIntent(intent as never),
-      triggerEmp: () => this.triggerEmp(),
+      setPlayerTrackS: (s: number, laneOffset?: number, speedMph?: number) => {
+        if (!this.player) return;
+        this.player.s = s;
+        this.player.crashed = false;
+        this.player.crashTimer = 0;
+        if (typeof laneOffset === "number") this.player.laneX = laneOffset;
+        if (typeof speedMph === "number") this.player.speed = speedMph * 0.44704;
+        this.player.vx = 0;
+        this.player.lean = 0;
+        for (const t of this.traffic) {
+          if (Math.abs(t.s - s) < 110) {
+            t.s = s + 190 + Math.random() * 140;
+          }
+        }
+        const pW = this.track.toWorld(this.player.s, this.player.laneX);
+        this.cameraRig.reset(pW.yaw, pW.y);
+      },
       triggerHeliView: () => {
         if (this.player) {
           this.wantedHeat = 5;

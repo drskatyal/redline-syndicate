@@ -4,6 +4,7 @@ import { GLTF, GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 
 export interface HdrEnvironmentPack {
+  day: { equirect: THREE.DataTexture; pmrem: THREE.Texture };
   sunset: { equirect: THREE.DataTexture; pmrem: THREE.Texture };
   sunrise: { equirect: THREE.DataTexture; pmrem: THREE.Texture };
   night: { equirect: THREE.DataTexture; pmrem: THREE.Texture };
@@ -13,7 +14,7 @@ export interface LoadedAssets {
   hdr: HdrEnvironmentPack;
   models: {
     heroBike: GLTF;
-    soldier: GLTF;
+    humanRider: GLTF;
     ferrari: GLTF;
     milkTruck: GLTF;
     helicopter: GLTF;
@@ -30,6 +31,9 @@ export interface LoadedAssets {
     concreteDiff: THREE.Texture;
     concreteNor: THREE.Texture;
     concreteRough: THREE.Texture;
+    sandDiff: THREE.Texture;
+    sandNor: THREE.Texture;
+    sandRough: THREE.Texture;
     facadeNight: THREE.Texture;
     facadeDay: THREE.Texture;
     highwaySigns: THREE.Texture;
@@ -64,7 +68,7 @@ async function internalLoadAll(
   const rgbeLoader = new RGBELoader();
   const texLoader = new THREE.TextureLoader();
 
-  const totalItems = 25;
+  const totalItems = 29;
   let completed = 0;
   const tick = (label: string) => {
     completed++;
@@ -108,11 +112,12 @@ async function internalLoadAll(
   if (onProgress) onProgress(3, "STREAMING HDR SKIES & PBR ASSETS...");
 
   const [
+    hdrDay,
     hdrSunset,
     hdrSunrise,
     hdrNight,
     heroBike,
-    soldier,
+    humanRider,
     ferrari,
     milkTruck,
     helicopter,
@@ -127,6 +132,9 @@ async function internalLoadAll(
     concreteDiff,
     concreteNor,
     concreteRough,
+    sandDiff,
+    sandNor,
+    sandRough,
     facadeNight,
     facadeDay,
     highwaySigns,
@@ -134,25 +142,29 @@ async function internalLoadAll(
     smoke,
     ferrariAo,
   ] = await Promise.all([
+    loadHdr("./hdr/day.hdr", "HDR Coastal Daylight Sky"),
     loadHdr("./hdr/sunset.hdr", "HDR Sunset Skybox"),
-    loadHdr("./hdr/sunrise.hdr", "HDR Desert Sunrise"),
+    loadHdr("./hdr/sunrise.hdr", "HDR Mountain Morning"),
     loadHdr("./hdr/night.hdr", "HDR Midnight Skybox"),
     loadGltf("./models/hero-motorcycle.glb", "Brembo Superbike 3D"),
-    loadGltf("./models/soldier.glb", "Armored Rider Rig"),
-    loadGltf("./models/ferrari.glb", "Supercar & Pursuit Mesh"),
-    loadGltf("./models/milk-truck.glb", "Heavy Transport Mesh"),
-    loadGltf("./models/helicopter.glb", "Bell Huey Pursuit Chopper"),
+    loadGltf("./models/human-rider.glb", "Human Street Rider"),
+    loadGltf("./models/ferrari.glb", "Traffic & Pursuit Cars"),
+    loadGltf("./models/milk-truck.glb", "Commercial Transport Truck"),
+    loadGltf("./models/helicopter.glb", "Police Pursuit Helicopter"),
     loadGltf("./models/road_barrier/concrete_road_barrier_1k.gltf", "Jersey Barriers"),
     loadGltf("./models/street_lamp/street_lamp_01_1k.gltf", "Highway Luminaires"),
     loadGltf("./models/tree/quiver_tree_02_1k.gltf", "Roadside Flora"),
     loadGltf("./models/shrub/shrub_03_1k.gltf", "Roadside Foliage"),
-    loadGltf("./models/boulder/boulder_01_1k.gltf", "Terrain Cliffs"),
+    loadGltf("./models/boulder/boulder_01_1k.gltf", "Coastal Cliffs"),
     loadTex("./pbr/asphalt_diff.jpg", "Asphalt Albedo", { srgb: true, repeat: true, aniso: true }),
     loadTex("./pbr/asphalt_nor.jpg", "Asphalt Normal", { srgb: false, repeat: true, aniso: true }),
     loadTex("./pbr/asphalt_rough.jpg", "Asphalt Roughness", { srgb: false, repeat: true, aniso: true }),
     loadTex("./pbr/concrete_diff.jpg", "Concrete Albedo", { srgb: true, repeat: true, aniso: true }),
     loadTex("./pbr/concrete_nor.jpg", "Concrete Normal", { srgb: false, repeat: true, aniso: true }),
     loadTex("./pbr/concrete_rough.jpg", "Concrete Roughness", { srgb: false, repeat: true, aniso: true }),
+    loadTex("./pbr/sand_diff.jpg", "Beach Sand Albedo", { srgb: true, repeat: true, aniso: true }),
+    loadTex("./pbr/sand_nor.jpg", "Beach Sand Normal", { srgb: false, repeat: true, aniso: true }),
+    loadTex("./pbr/sand_rough.jpg", "Beach Sand Roughness", { srgb: false, repeat: true, aniso: true }),
     loadTex("./pbr/facade_glass_night.jpg", "City Tower Night Facade", { srgb: true, repeat: true, aniso: true }),
     loadTex("./pbr/facade_tower_day.jpg", "City Tower Day Facade", { srgb: true, repeat: true, aniso: true }),
     loadTex("./pbr/highway_signs.jpg", "DOT Highway Signage", { srgb: true, aniso: true }),
@@ -164,7 +176,7 @@ async function internalLoadAll(
   if (onProgress) onProgress(99, "BAKING HDR ENVIRONMENT REFLECTIONS...");
 
   // Upgrade anisotropic filtering inside glTF materials
-  for (const gltf of [heroBike, soldier, ferrari, milkTruck, helicopter, roadBarrier, streetLamp, tree, shrub, boulder]) {
+  for (const gltf of [heroBike, humanRider, ferrari, milkTruck, helicopter, roadBarrier, streetLamp, tree, shrub, boulder]) {
     gltf.scene.traverse((obj) => {
       const m = obj as THREE.Mesh;
       if (!m.isMesh) return;
@@ -182,6 +194,7 @@ async function internalLoadAll(
   // Bake HDR PMREM reflection maps once per sky
   const pmrem = new THREE.PMREMGenerator(renderer);
   pmrem.compileEquirectangularShader();
+  const dayPmrem = pmrem.fromEquirectangular(hdrDay).texture;
   const sunsetPmrem = pmrem.fromEquirectangular(hdrSunset).texture;
   const sunrisePmrem = pmrem.fromEquirectangular(hdrSunrise).texture;
   const nightPmrem = pmrem.fromEquirectangular(hdrNight).texture;
@@ -191,13 +204,14 @@ async function internalLoadAll(
 
   return {
     hdr: {
+      day: { equirect: hdrDay, pmrem: dayPmrem },
       sunset: { equirect: hdrSunset, pmrem: sunsetPmrem },
       sunrise: { equirect: hdrSunrise, pmrem: sunrisePmrem },
       night: { equirect: hdrNight, pmrem: nightPmrem },
     },
     models: {
       heroBike,
-      soldier,
+      humanRider,
       ferrari,
       milkTruck,
       helicopter,
@@ -214,6 +228,9 @@ async function internalLoadAll(
       concreteDiff,
       concreteNor,
       concreteRough,
+      sandDiff,
+      sandNor,
+      sandRough,
       facadeNight,
       facadeDay,
       highwaySigns,

@@ -218,59 +218,56 @@ export class RenderPipeline {
 
   public applyStageAtmosphere(stage: StageSpec): void {
     const hdrKey =
-      stage.biome === "vice" ? "sunset" : stage.biome === "dubai" || stage.biome === "alpine" ? "sunrise" : "night";
+      stage.biome === "vice" || stage.biome === "kowloon"
+        ? "day"
+        : stage.biome === "dubai"
+          ? "sunset"
+          : stage.biome === "alpine"
+            ? "sunrise"
+            : "night";
 
     if (this.assets) {
       const hdr = this.assets.hdr[hdrKey];
       this.scene.background = hdr.equirect;
-      this.scene.backgroundBlurriness = 0.025;
+      this.scene.backgroundBlurriness = 0.02;
       this.scene.environment = hdr.pmrem;
-      this.scene.environmentIntensity = stage.isNight ? 1.15 : 1.05;
+      this.scene.environmentIntensity = stage.isNight ? 1.1 : 1.0;
     }
 
-    const fogHex =
-      stage.biome === "vice"
-        ? 0x2a1f2d
-        : stage.biome === "kowloon"
-          ? 0x0b1726
-          : stage.biome === "dubai"
-            ? 0xa48066
-            : stage.biome === "alpine"
-              ? 0x7a99b5
-              : 0x090b16;
-    const fogDens = stage.biome === "dubai" ? 0.00075 : stage.biome === "vice" ? 0.00095 : 0.00105;
+    const fogHex = stage.fogHex;
+    const fogDens = stage.fogDensity;
 
     this.scene.fog = new THREE.FogExp2(fogHex, fogDens);
-    this.sunLight.color.setHex(stage.biome === "dubai" ? 0xffe4b5 : stage.isNight ? 0x9ec5ff : 0xffd5ad);
-    this.sunLight.intensity = stage.biome === "vice" ? 1.25 : stage.isNight ? 1.45 : 2.6;
-    this.ambientLight.color.setHex(stage.isNight ? 0x8fb8ff : 0xfce7cf);
+    this.sunLight.color.setHex(stage.sunHex);
+    this.sunLight.intensity = stage.sunIntensity;
+    this.ambientLight.color.setHex(stage.ambientHex);
     this.ambientLight.groundColor.setHex(stage.groundHex);
-    this.ambientLight.intensity = stage.isNight ? 0.78 : 1.05;
-    this.rimLight.color.setHex(stage.accentNeonHex);
-    this.rimLight.intensity = stage.isNight ? 0.9 : 0.45;
-    this.renderer.toneMappingExposure = stage.biome === "dubai" ? 0.92 : stage.biome === "vice" ? 0.95 : stage.isNight ? 1.04 : 1.0;
+    this.ambientLight.intensity = stage.ambientIntensity;
+    this.rimLight.color.setHex(stage.isNight ? 0x60a5fa : 0xffffff);
+    this.rimLight.intensity = stage.isNight ? 0.65 : 0.35;
+    this.renderer.toneMappingExposure = stage.biome === "dubai" ? 0.94 : stage.isNight ? 1.05 : 1.02;
   }
 
   public applyHangarAtmosphere(): void {
     if (this.assets) {
       const hdr = this.assets.hdr.sunset;
       this.scene.background = hdr.equirect;
-      this.scene.backgroundBlurriness = 0.045;
+      this.scene.backgroundBlurriness = 0.04;
       this.scene.environment = hdr.pmrem;
-      this.scene.environmentIntensity = 1.2;
+      this.scene.environmentIntensity = 1.15;
     }
-    this.scene.fog = new THREE.FogExp2(0x141924, 0.008);
-    this.sunLight.color.setHex(0xffe6cc);
-    this.sunLight.intensity = 2.1;
+    this.scene.fog = new THREE.FogExp2(0x1b2230, 0.008);
+    this.sunLight.color.setHex(0xffe8d0);
+    this.sunLight.intensity = 2.2;
     this.sunLight.position.set(8, 12, 10);
     this.sunLight.target.position.set(0, 0.5, 0);
     this.sunLight.target.updateMatrixWorld();
 
-    this.ambientLight.color.setHex(0xcbe4ff);
-    this.ambientLight.groundColor.setHex(0x111827);
+    this.ambientLight.color.setHex(0xdbeafe);
+    this.ambientLight.groundColor.setHex(0x1f2430);
     this.ambientLight.intensity = 0.95;
-    this.rimLight.color.setHex(0x38bdf8);
-    this.rimLight.intensity = 1.1;
+    this.rimLight.color.setHex(0x93c5fd);
+    this.rimLight.intensity = 0.75;
     this.renderer.toneMappingExposure = 1.02;
   }
 

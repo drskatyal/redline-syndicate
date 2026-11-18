@@ -15,12 +15,13 @@ export interface MaterialKit {
   wetAsphaltMat: THREE.MeshStandardMaterial;
   concreteMat: THREE.MeshStandardMaterial;
   shoulderGroundMat: THREE.MeshStandardMaterial;
+  beachSandMat: THREE.MeshStandardMaterial;
+  oceanWaterMat: THREE.MeshPhysicalMaterial;
   darkAlloyMat: THREE.MeshStandardMaterial;
   skyscraperNightMat: THREE.MeshStandardMaterial;
   skyscraperDayMat: THREE.MeshStandardMaterial;
   highwaySignMat: THREE.MeshStandardMaterial;
   rampMat: THREE.MeshStandardMaterial;
-  empWaveMat: THREE.MeshBasicMaterial;
   ferrariAoMat: THREE.MeshBasicMaterial;
   jetFlameTex: THREE.CanvasTexture;
   headlightPoolTex: THREE.CanvasTexture;
@@ -153,9 +154,9 @@ function buildJetFlameTexture(): THREE.CanvasTexture {
       const core = Math.pow(Math.max(0, 1 - radial * 1.4), 2) * Math.max(0, 1 - v * 1.3);
 
       const p = (y * size + x) * 4;
-      img.data[p] = Math.round(Math.min(255, (0.25 + core * 0.75) * 255));
-      img.data[p + 1] = Math.round(Math.min(255, (0.65 + core * 0.35) * 255));
-      img.data[p + 2] = 255;
+      img.data[p] = Math.round(Math.min(255, (0.92 + core * 0.08) * 255));
+      img.data[p + 1] = Math.round(Math.min(255, (0.58 + core * 0.40) * 255));
+      img.data[p + 2] = Math.round(Math.min(255, (0.18 + core * 0.72) * 255));
       img.data[p + 3] = Math.round(Math.min(255, intensity * 255));
     }
   }
@@ -230,6 +231,9 @@ export function createMaterialKit(assets: LoadedAssets, maxAniso: number): Mater
   }
   for (const t of [textures.concreteDiff, textures.concreteNor, textures.concreteRough]) {
     t.repeat.set(6, 4);
+  }
+  for (const t of [textures.sandDiff, textures.sandNor, textures.sandRough]) {
+    t.repeat.set(8, 6);
   }
 
   // Crop vertical dark border around DOT highway signs
@@ -348,6 +352,28 @@ export function createMaterialKit(assets: LoadedAssets, maxAniso: number): Mater
     envMapIntensity: 0.5,
   });
 
+  const beachSandMat = new THREE.MeshStandardMaterial({
+    color: 0xf2dfc2,
+    map: textures.sandDiff,
+    normalMap: textures.sandNor,
+    normalScale: new THREE.Vector2(0.95, 0.95),
+    roughnessMap: textures.sandRough,
+    roughness: 0.94,
+    metalness: 0.0,
+    envMapIntensity: 0.45,
+  });
+
+  const oceanWaterMat = new THREE.MeshPhysicalMaterial({
+    color: 0x055b84,
+    normalMap: textures.sandNor,
+    normalScale: new THREE.Vector2(0.32, 0.32),
+    roughness: 0.24,
+    metalness: 0.05,
+    clearcoat: 0.45,
+    clearcoatRoughness: 0.16,
+    envMapIntensity: 0.85,
+  });
+
   const darkAlloyMat = new THREE.MeshStandardMaterial({
     color: 0x222831,
     roughness: 0.42,
@@ -394,28 +420,35 @@ export function createMaterialKit(assets: LoadedAssets, maxAniso: number): Mater
     map: textures.concreteDiff,
     normalMap: textures.concreteNor,
     roughnessMap: textures.concreteRough,
-    color: 0xf59e0b,
-    roughness: 0.55,
-    metalness: 0.35,
+    color: 0x6b7280,
+    roughness: 0.78,
+    metalness: 0.12,
   });
 
-  const empWaveMat = new THREE.MeshBasicMaterial({
-    color: 0x00f0ff,
-    transparent: true,
-    opacity: 0.65,
-    blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,
-    depthWrite: false,
-  });
+  // Clean pure-white outer border Multiply AO texture (eliminates faint square edges on sunlit concrete/sand)
+  const aoCanvas = document.createElement("canvas");
+  aoCanvas.width = aoCanvas.height = 128;
+  const aoCtx = aoCanvas.getContext("2d")!;
+  aoCtx.fillStyle = "#ffffff";
+  aoCtx.fillRect(0, 0, 128, 128);
+  const aoGrad = aoCtx.createRadialGradient(64, 64, 14, 64, 64, 58);
+  aoGrad.addColorStop(0, "rgba(18, 20, 26, 0.72)");
+  aoGrad.addColorStop(0.55, "rgba(32, 36, 44, 0.28)");
+  aoGrad.addColorStop(1, "rgba(255, 255, 255, 0)");
+  aoCtx.fillStyle = aoGrad;
+  aoCtx.fillRect(0, 0, 128, 128);
+  const cleanAoTex = new THREE.CanvasTexture(aoCanvas);
+  cleanAoTex.colorSpace = THREE.SRGBColorSpace;
+  cleanAoTex.needsUpdate = true;
 
-  // Grayscale AO shadow map -> MultiplyBlending with premultipliedAlpha makes white transparent!
+  // White background + MultiplyBlending produces soft grounded shadows with zero rectangular box edge
   const ferrariAoMat = new THREE.MeshBasicMaterial({
-    map: textures.ferrariAo,
+    map: cleanAoTex,
     color: 0xffffff,
     blending: THREE.MultiplyBlending,
     premultipliedAlpha: true,
     transparent: true,
-    opacity: 0.9,
+    opacity: 0.88,
     toneMapped: false,
     depthWrite: false,
   });
@@ -438,12 +471,13 @@ export function createMaterialKit(assets: LoadedAssets, maxAniso: number): Mater
     wetAsphaltMat,
     concreteMat,
     shoulderGroundMat,
+    beachSandMat,
+    oceanWaterMat,
     darkAlloyMat,
     skyscraperNightMat,
     skyscraperDayMat,
     highwaySignMat,
     rampMat,
-    empWaveMat,
     ferrariAoMat,
     jetFlameTex,
     headlightPoolTex,

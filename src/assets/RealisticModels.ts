@@ -645,35 +645,35 @@ export function createSuperbikeInstance(
   aoQuad.position.y = 0.012;
   chassisPivot.add(aoQuad);
 
-  // Subtle flat headlight beam pool on the asphalt ahead of the tire
+  // Subtle headlight road pool on the asphalt ahead of the tire (suppressed in daytime)
   const headPoolMat = new THREE.MeshBasicMaterial({
     map: kit.headlightPoolTex,
-    color: 0xe0f2fe,
+    color: 0xfef3c7,
     transparent: true,
-    opacity: 0.22,
+    opacity: 0.04,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
   });
-  const headPool = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 7.2), headPoolMat);
+  const headPool = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 6.2), headPoolMat);
   headPool.rotation.x = -Math.PI * 0.5;
-  headPool.position.set(0, 0.025, 4.4);
+  headPool.position.set(0, 0.025, 4.0);
   chassisPivot.add(headPool);
 
-  // Crisp teardrop Nitro exhaust plume pointing backward (-Z) from tailpipe
+  // Crisp teardrop afterburner / backfire plume pointing backward (-Z) from tailpipe
   const exhaustFlames: THREE.Mesh[] = [];
   const fMat = new THREE.MeshBasicMaterial({
     map: kit.jetFlameTex,
-    color: 0x38bdf8,
+    color: 0xffa23a,
     transparent: true,
-    opacity: 0.95,
+    opacity: 0.92,
     blending: THREE.AdditiveBlending,
     depthWrite: false,
     side: THREE.DoubleSide,
   });
   for (const rotZ of [0, Math.PI * 0.5]) {
-    const fg = new THREE.PlaneGeometry(0.24, 0.62);
+    const fg = new THREE.PlaneGeometry(0.22, 0.54);
     // Top of jetFlameTex is nozzle tip (y=+0.31), tail goes -0.31; rotate so nozzle is at Z=0, tail extends -Z
-    fg.translate(0, -0.28, 0);
+    fg.translate(0, -0.25, 0);
     fg.rotateX(Math.PI * 0.5);
     const fm = new THREE.Mesh(fg, fMat);
     fm.position.copy(tpl.exhaustPos);
@@ -714,70 +714,76 @@ export function createSuperbikeInstance(
 
 function createWeaponAttachment(weaponId: WeaponId): THREE.Group {
   const g = new THREE.Group();
-  const metal = new THREE.MeshStandardMaterial({ color: 0xd1d5db, metalness: 0.9, roughness: 0.22 });
-  const grip = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.75 });
-  const glowColor = weaponId === "katana" ? 0xff2a85 : weaponId === "arc" ? 0x00f0ff : 0xf59e0b;
-  const edgeMat = new THREE.MeshStandardMaterial({
-    color: glowColor,
-    emissive: glowColor,
-    emissiveIntensity: 2.2,
-    roughness: 0.2,
-    metalness: 0.4,
-  });
+  const steelMat = new THREE.MeshStandardMaterial({ color: 0xbec5ce, metalness: 0.88, roughness: 0.26 });
+  const darkMetal = new THREE.MeshStandardMaterial({ color: 0x22262e, metalness: 0.72, roughness: 0.42 });
+  const gripMat = new THREE.MeshStandardMaterial({ color: 0x17181c, roughness: 0.85, metalness: 0.05 });
+  const brassMat = new THREE.MeshStandardMaterial({ color: 0xc99c3c, metalness: 0.86, roughness: 0.32 });
+  const redSteel = new THREE.MeshStandardMaterial({ color: 0x991b1b, metalness: 0.65, roughness: 0.38 });
 
   if (weaponId === "katana") {
-    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.018, 0.24, 8), grip);
-    const guard = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.042, 0.014, 12), metal);
-    guard.position.y = 0.12;
-    const blade = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.78, 0.034), metal);
-    blade.position.y = 0.52;
-    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.008, 0.76, 0.012), edgeMat);
-    edge.position.set(0, 0.52, 0.018);
-    g.add(handle, guard, blade, edge);
+    // Alloy Baseball Bat
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.017, 0.24, 10), gripMat);
+    grip.position.y = 0.1;
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.018, 0.56, 12), steelMat);
+    barrel.position.y = 0.48;
+    const endCap = new THREE.Mesh(new THREE.SphereGeometry(0.036, 10, 8), darkMetal);
+    endCap.position.y = 0.76;
+    g.add(grip, barrel, endCap);
   } else if (weaponId === "whip") {
-    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.02, 0.22, 8), grip);
+    // Heavy Steel Lock Chain
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.018, 0.18, 8), gripMat);
+    handle.position.y = 0.08;
     g.add(handle);
-    for (let i = 1; i <= 6; i++) {
-      const link = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.1, 6), i % 2 === 0 ? edgeMat : metal);
-      link.position.set(0, 0.12 + i * 0.095, Math.sin(i * 0.5) * 0.03);
-      link.rotation.x = 0.15;
+    for (let i = 1; i <= 7; i++) {
+      const link = new THREE.Mesh(new THREE.TorusGeometry(0.022, 0.007, 6, 10), steelMat);
+      link.position.set(0, 0.15 + i * 0.052, 0);
+      link.rotation.y = i % 2 === 0 ? 0 : Math.PI * 0.5;
       g.add(link);
     }
-  } else if (weaponId === "baton" || weaponId === "arc") {
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.018, 0.58, 10), grip);
-    shaft.position.y = 0.2;
-    const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.026, 0.2, 10), edgeMat);
-    tip.position.y = 0.5;
-    g.add(shaft, tip);
+  } else if (weaponId === "baton") {
+    // Police Nightstick / Tonfa
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.14, 10), gripMat);
+    handle.position.set(0, 0.06, 0.05);
+    handle.rotation.x = Math.PI * 0.5;
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.58, 12), darkMetal);
+    shaft.position.y = 0.24;
+    g.add(handle, shaft);
+  } else if (weaponId === "arc") {
+    // Forged Steel Crowbar
+    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.58, 8), redSteel);
+    shaft.position.y = 0.28;
+    const hook = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.12, 0.08), steelMat);
+    hook.position.set(0, 0.58, 0.035);
+    hook.rotation.x = 0.45;
+    g.add(shaft, hook);
   } else {
-    const knuckle = new THREE.Mesh(new THREE.BoxGeometry(0.052, 0.09, 0.09), edgeMat);
-    knuckle.position.y = 0.05;
+    // Brass Knuckles
+    const knuckle = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.09, 0.042), brassMat);
+    knuckle.position.y = 0.035;
     g.add(knuckle);
   }
   return g;
 }
 
 /**
- * Clones rigged PBR `Soldier.glb`, fixes GLTFLoader's colon-stripped Mixamo bone names,
- * applies rest-quaternion multiplicative pose math into an authentic MotoGP tuck facing +Z,
- * equips a gloss-carbon sportbike helmet + weapon, and drives corner lean & melee swings.
+ * Clones rigged PBR `human-rider.glb` (ReadyPlayerMe realistic human facing +Z in meters),
+ * preserves natural human skin/face/hair textures, tailors leather riding jacket & jeans,
+ * adds riding sunglasses, attaches meter-scale weapons, and drives authentic MotoGP corner lean & melee swings.
  */
 export function createArmoredRiderInstance(
   assets: LoadedAssets,
   jacketHex: number,
-  accentHex: number,
+  _accentHex: number,
   weaponId: WeaponId
 ): ArmoredRiderVisual {
   const root = new THREE.Group();
-  const charRoot = SkeletonUtils.clone(assets.models.soldier.scene);
+  const charRoot = SkeletonUtils.clone(assets.models.humanRider.scene);
   root.add(charRoot);
 
-  // Soldier.glb natively faces -Z -> rotate 180 deg around Y to face +Z!
-  charRoot.rotation.set(0, Math.PI, 0);
+  // readyplayer.me.glb natively faces +Z in world meters (~1.86m standing) -> slight scale to 1.72m rider
+  charRoot.rotation.set(0, 0, 0);
+  charRoot.scale.setScalar(0.93);
   charRoot.updateMatrixWorld(true);
-  const rawBox = new THREE.Box3().setFromObject(charRoot);
-  const rawH = Math.max(0.001, rawBox.max.y - rawBox.min.y);
-  charRoot.scale.setScalar(1.68 / rawH);
 
   charRoot.traverse((obj) => {
     const sm = obj as THREE.SkinnedMesh;
@@ -787,47 +793,93 @@ export function createArmoredRiderInstance(
       sm.receiveShadow = true;
       const mat = sm.material as THREE.MeshStandardMaterial;
       if (mat) {
-        const clonedMat = mat.clone();
-        if (mat.name.toLowerCase().includes("visor")) {
-          clonedMat.color.setHex(accentHex).multiplyScalar(0.35);
-          clonedMat.metalness = 0.94;
-          clonedMat.roughness = 0.08;
-          clonedMat.emissive.setHex(accentHex);
-          clonedMat.emissiveIntensity = 0.4;
-        } else {
-          clonedMat.color.lerp(new THREE.Color(jacketHex), 0.56);
-          clonedMat.roughness = 0.44;
-          clonedMat.metalness = 0.26;
+        const mn = (mat.name || "").toLowerCase();
+        const meshN = (sm.name || "").toLowerCase();
+        // Remove fedora headwear and hidden teeth/eye spheres behind wraparound shades to cut draw calls
+        if (
+          mn.includes("headwear") ||
+          meshN.includes("headwear") ||
+          meshN.includes("eye") ||
+          meshN.includes("teeth")
+        ) {
+          sm.visible = false;
+          return;
         }
-        clonedMat.envMapIntensity = 1.15;
+        const clonedMat = mat.clone();
+        if (mn.includes("outfit_top")) {
+          // Tailored leather / textile street motorcycle jacket
+          clonedMat.color.setHex(jacketHex).multiplyScalar(0.95);
+          clonedMat.roughness = 0.46;
+          clonedMat.metalness = 0.08;
+        } else if (mn.includes("outfit_bottom")) {
+          clonedMat.color.setHex(0x1b2434);
+          clonedMat.roughness = 0.78;
+          clonedMat.metalness = 0.02;
+        } else if (mn.includes("outfit_footwear")) {
+          clonedMat.color.setHex(0x14161b);
+          clonedMat.roughness = 0.52;
+          clonedMat.metalness = 0.06;
+        }
+        // Leave Wolf3D_Skin, Wolf3D_Eye, Wolf3D_Teeth, Wolf3D_Beard photorealistic skin tones untouched!
+        clonedMat.envMapIntensity = 1.0;
         sm.material = clonedMat;
       }
     }
   });
 
-  // GLTFLoader strips colons ("mixamorig:LeftArm" -> "mixamorigLeftArm")! Normalize keys via regex:
   const bones: Record<string, THREE.Object3D> = {};
   const restQuats: Record<string, THREE.Quaternion> = {};
   charRoot.traverse((o) => {
     if (!o.name) return;
-    const clean = o.name.replace(/^mixamorig:?/, "");
-    bones[clean] = o;
-    restQuats[clean] = o.quaternion.clone();
+    bones[o.name] = o;
+    restQuats[o.name] = o.quaternion.clone();
   });
+
+  // Fitted open-face street motorcycle helmet shell + wraparound dark sunglasses (keeps human face/beard visible!)
+  if (bones["Head"]) {
+    const helmetShellMat = new THREE.MeshPhysicalMaterial({
+      color: 0x151922,
+      metalness: 0.45,
+      roughness: 0.16,
+      clearcoat: 1.0,
+      clearcoatRoughness: 0.05,
+      envMapIntensity: 1.35,
+    });
+    const shell = new THREE.Mesh(
+      new THREE.SphereGeometry(0.118, 18, 14, 0, Math.PI * 2, 0, Math.PI * 0.58),
+      helmetShellMat
+    );
+    shell.scale.set(0.96, 1.05, 1.14);
+    shell.position.set(0, 0.112, 0.01);
+    shell.rotation.x = -0.16;
+
+    const shadeMat = new THREE.MeshPhysicalMaterial({
+      color: 0x0b0e14,
+      metalness: 0.78,
+      roughness: 0.12,
+      clearcoat: 1.0,
+      envMapIntensity: 1.6,
+    });
+    const glasses = new THREE.Mesh(new THREE.BoxGeometry(0.132, 0.032, 0.022), shadeMat);
+    glasses.position.set(0, 0.088, 0.108);
+    bones["Head"].add(shell, glasses);
+  }
 
   const rightHand = bones["RightHand"];
   const leftHand = bones["LeftHand"];
   const weaponGroupR = createWeaponAttachment(weaponId);
   const weaponGroupL = createWeaponAttachment(weaponId);
   if (rightHand) {
-    weaponGroupR.scale.setScalar(82);
-    weaponGroupR.rotation.set(Math.PI * 0.5, 0, 0);
+    weaponGroupR.scale.setScalar(1.0);
+    weaponGroupR.rotation.set(-0.18, 0, 0);
+    weaponGroupR.position.set(0, 0.05, 0.02);
     weaponGroupR.visible = false;
     rightHand.add(weaponGroupR);
   }
   if (leftHand) {
-    weaponGroupL.scale.setScalar(82);
-    weaponGroupL.rotation.set(Math.PI * 0.5, 0, 0);
+    weaponGroupL.scale.setScalar(1.0);
+    weaponGroupL.rotation.set(-0.18, 0, 0);
+    weaponGroupL.position.set(0, 0.05, 0.02);
     weaponGroupL.visible = false;
     leftHand.add(weaponGroupL);
   }
@@ -844,6 +896,11 @@ export function createArmoredRiderInstance(
     b.quaternion.copy(rq).multiply(tmpQuat);
   };
 
+  /**
+   * Drives rider posture on bike facing +Z.
+   * Polarity: leanNorm < 0 = Left (+X), leanNorm > 0 = Right (-X).
+   * attackSide < 0 = Left (+X), attackSide > 0 = Right (-X).
+   */
   const applyMotoPose = (
     leanNorm: number,
     speedNorm: number,
@@ -852,79 +909,83 @@ export function createArmoredRiderInstance(
     attackType: "melee" | "kick",
     elapsed: number
   ) => {
-    const tuck = 0.22 + speedNorm * 0.24;
-    // Rider shifts weight into corners while pelvis stays planted on saddle and boots above footpegs
-    const bodyShiftX = THREE.MathUtils.clamp(-leanNorm * 0.12, -0.15, 0.15);
-    charRoot.position.set(bodyShiftX, 0.12, -0.22);
+    const tuck = 0.18 + speedNorm * 0.22;
+    // Shift hips inside corner: leanNorm > 0 (Right) -> -X
+    const bodyShiftX = THREE.MathUtils.clamp(-leanNorm * 0.14, -0.16, 0.16);
+    charRoot.position.set(bodyShiftX, -0.17, -0.24);
 
-    // Hips tilted forward over tank; spine tucked gracefully
-    applyDelta("Hips", -0.34 - tuck * 0.18, 0, -leanNorm * 0.12);
-    applyDelta("Spine", 0.34 + tuck * 0.28, 0, leanNorm * 0.14);
-    applyDelta("Spine1", 0.28 + tuck * 0.22, 0, leanNorm * 0.1);
-    applyDelta("Spine2", 0.18 + tuck * 0.14, 0, 0);
+    // Torso leaned forward over tank; positive Z delta tilts spine toward -X (Right)
+    applyDelta("Hips", 0.30 + tuck * 0.14, 0, leanNorm * 0.10);
+    applyDelta("Spine", 0.22 + tuck * 0.16, 0, leanNorm * 0.14);
+    applyDelta("Spine1", 0.20 + tuck * 0.14, 0, leanNorm * 0.10);
+    applyDelta("Spine2", 0.14 + tuck * 0.08, -leanNorm * 0.06, 0);
 
-    // Lift neck/head to keep visor level looking ahead (+Z)
-    applyDelta("Neck", -0.32 - tuck * 0.2, leanNorm * 0.12, 0);
-    applyDelta("Head", -0.38 - tuck * 0.24, leanNorm * 0.16, 0);
+    // Keep head up looking down the highway ahead (+Z) and slightly into apex
+    applyDelta("Neck", -0.34 - tuck * 0.18, -leanNorm * 0.12, -leanNorm * 0.06);
+    applyDelta("Head", -0.42 - tuck * 0.22, -leanNorm * 0.16, -leanNorm * 0.12);
 
-    // Arms reaching forward (+Z) and slightly down to clip-on grips
-    let lArmX = -1.18;
+    // Arms reaching forward/down to clip-on grips (Left=+X, Right=-X)
+    let lArmX = 0.10;
     let lArmY = 0;
-    let lArmZ = 0.42;
-    let lForeX = -0.38;
-    let lForeZ = 0.32;
+    let lArmZ = 0.92;
+    let lForeX = 0.12;
+    let lForeZ = 0.45;
 
-    let rArmX = 1.18;
+    let rArmX = 0.10;
     let rArmY = 0;
-    let rArmZ = 0.42;
-    let rForeX = 0.38;
-    let rForeZ = -0.32;
+    let rArmZ = -0.92;
+    let rForeX = 0.12;
+    let rForeZ = -0.45;
 
-    // Legs gripping tank and boots resting high on rearset footpegs
-    const lKneeOut = leanNorm < -0.2 ? -leanNorm * 0.35 : 0;
-    const rKneeOut = leanNorm > 0.2 ? leanNorm * 0.35 : 0;
-    let lUpLegX = -1.38;
-    let lUpLegZ = -0.26 - lKneeOut;
-    let lLegX = 2.02;
+    // Knees gripping tank, knee out on inside turn, boots resting on rearsets
+    const lKneeOut = leanNorm < -0.15 ? -leanNorm * 0.32 : 0;
+    const rKneeOut = leanNorm > 0.15 ? leanNorm * 0.32 : 0;
+    let lUpLegX = 1.28;
+    let lUpLegZ = 0.28 + lKneeOut;
+    let lLegX = -1.90;
 
-    let rUpLegX = -1.38;
-    let rUpLegZ = 0.26 + rKneeOut;
-    let rLegX = 2.02;
+    let rUpLegX = 1.28;
+    let rUpLegZ = -0.28 - rKneeOut;
+    let rLegX = -1.90;
 
     const striking = attackPhase > 0 && attackPhase < 1;
-    weaponGroupR.visible = striking && attackType === "melee" && attackSide >= 0;
+    weaponGroupR.visible = striking && attackType === "melee" && attackSide > 0;
     weaponGroupL.visible = striking && attackType === "melee" && attackSide < 0;
 
     if (striking) {
       const swing = Math.sin(attackPhase * Math.PI);
       if (attackType === "melee") {
         if (attackSide >= 0) {
-          rArmX = 0.65 - swing * 0.7;
-          rArmY = -swing * 0.9;
-          rArmZ = 0.12 - swing * 0.95;
-          rForeX = 0.15;
-          rForeZ = 0;
+          // Right-hand strike outward to -X
+          rArmX = 0.10 - swing * 0.38;
+          rArmY = -swing * 0.35;
+          rArmZ = -0.92 + swing * 1.38;
+          rForeX = 0.05;
+          rForeZ = -0.45 * (1 - swing);
         } else {
-          lArmX = -0.65 + swing * 0.7;
-          lArmY = swing * 0.9;
-          lArmZ = 0.12 - swing * 0.95;
-          lForeX = -0.15;
-          lForeZ = 0;
+          // Left-hand strike outward to +X
+          lArmX = 0.10 - swing * 0.38;
+          lArmY = swing * 0.35;
+          lArmZ = 0.92 - swing * 1.38;
+          lForeX = 0.05;
+          lForeZ = 0.45 * (1 - swing);
         }
       } else {
         if (attackSide >= 0) {
-          rUpLegX = -0.75;
-          rUpLegZ = 0.35 + swing * 1.15;
-          rLegX = 0.35 + (1 - swing) * 0.7;
+          // Right-leg kick outward to -X
+          rUpLegX = 0.65;
+          rUpLegZ = -0.28 - swing * 1.05;
+          rLegX = -1.90 + swing * 1.55;
         } else {
-          lUpLegX = -0.75;
-          lUpLegZ = -0.35 - swing * 1.15;
-          lLegX = 0.35 + (1 - swing) * 0.7;
+          // Left-leg kick outward to +X
+          lUpLegX = 0.65;
+          lUpLegZ = 0.28 + swing * 1.05;
+          lLegX = -1.90 + swing * 1.55;
         }
       }
     }
 
-    const breath = Math.sin(elapsed * 4.5) * 0.015;
+    const breath = Math.sin(elapsed * 4.5) * 0.012;
     applyDelta("LeftShoulder", 0, 0, breath);
     applyDelta("RightShoulder", 0, 0, -breath);
 
@@ -934,13 +995,13 @@ export function createArmoredRiderInstance(
     applyDelta("RightArm", rArmX, rArmY, rArmZ);
     applyDelta("RightForeArm", rForeX, 0, rForeZ);
 
-    applyDelta("LeftUpLeg", lUpLegX, 0.16, lUpLegZ);
+    applyDelta("LeftUpLeg", lUpLegX, 0.08, lUpLegZ);
     applyDelta("LeftLeg", lLegX, 0, 0);
-    applyDelta("LeftFoot", 0.35, 0, 0);
+    applyDelta("LeftFoot", -0.32, 0, 0);
 
-    applyDelta("RightUpLeg", rUpLegX, -0.16, rUpLegZ);
+    applyDelta("RightUpLeg", rUpLegX, -0.08, rUpLegZ);
     applyDelta("RightLeg", rLegX, 0, 0);
-    applyDelta("RightFoot", 0.35, 0, 0);
+    applyDelta("RightFoot", -0.32, 0, 0);
   };
 
   applyMotoPose(0, 0, 0, 0, "melee", 0);
@@ -952,6 +1013,8 @@ export function createArmoredRiderInstance(
 }
 
 const EXOTIC_PAINTS = [0xd4001a, 0x161b24, 0x9ca3af, 0xeab308, 0x1d4ed8, 0xe2e8f0];
+const COMMUTER_PAINTS = [0xe5e7eb, 0x9ca3af, 0x1e3a5f, 0x1f2937, 0x7f1d1d, 0x334155];
+const TRUCK_PAINTS = [0xe5e7eb, 0xd1d5db, 0x1e3a8a, 0x334155];
 
 /**
  * Creates a merged & decimated high-poly Ferrari / Apex Police Interceptor or metallic Cargo Truck
@@ -989,12 +1052,12 @@ export function createTrafficVehicleInstance(
     modelWrap.position.set(-c3.x, -b3.min.y, -c3.z);
 
     const bodyMat = new THREE.MeshStandardMaterial({
-      color: variantIndex % 2 === 0 ? 0x262d38 : 0x353c4a,
+      color: TRUCK_PAINTS[variantIndex % TRUCK_PAINTS.length],
       normalMap: assets.textures.concreteNor,
-      normalScale: new THREE.Vector2(0.16, 0.16),
-      metalness: 0.65,
-      roughness: 0.36,
-      envMapIntensity: 1.15,
+      normalScale: new THREE.Vector2(0.14, 0.14),
+      metalness: 0.42,
+      roughness: 0.34,
+      envMapIntensity: 1.05,
     });
     const glassMat = new THREE.MeshPhysicalMaterial({
       color: 0x070b12,
@@ -1044,14 +1107,19 @@ export function createTrafficVehicleInstance(
     };
   }
 
-  // Compiled & welded Ferrari template (~14K tris, 7 draw calls)
+  // Compiled & welded passenger / exotic / patrol chassis (uniform scaling keeps wheels round!)
   const tpl = getCompiledFerrariTemplate(assets);
-  const scaleFactor = kind === "exotic" ? 1.0 : kind === "police" ? 1.04 : 1.02;
+  const scaleFactor = kind === "sedan" ? 0.96 : kind === "police" ? 1.04 : 1.0;
   const carGroup = new THREE.Group();
   carGroup.scale.setScalar(scaleFactor);
   root.add(carGroup);
 
-  const paintHex = kind === "police" ? 0x0d121a : EXOTIC_PAINTS[variantIndex % EXOTIC_PAINTS.length];
+  const paintHex =
+    kind === "police"
+      ? 0x0d121a
+      : kind === "sedan"
+        ? COMMUTER_PAINTS[variantIndex % COMMUTER_PAINTS.length]
+        : EXOTIC_PAINTS[variantIndex % EXOTIC_PAINTS.length];
   const bodyMat = new THREE.MeshPhysicalMaterial({
     color: paintHex,
     metalness: kind === "police" ? 0.54 : 0.72,
@@ -1397,5 +1465,103 @@ export function createSkyscraperTemplates(): SkyscraperTemplates {
 
   return {
     geometries: [mkTieredTower(0), mkTieredTower(1), mkTieredTower(2)],
+  };
+}
+
+/**
+ * Builds an instancing-ready coastal palm tree (curved ringed trunk + arched green pinnate fronds)
+ * using merged BufferGeometries (2 draw calls per InstancedMesh cohort across the beach highway).
+ */
+export function createCoastalPalmTemplate(assets: LoadedAssets): PropTemplate {
+  // Smooth continuous lofted curved palm trunk (no stepped cylinder ledges)
+  const curve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0.28, 3.0, 0.05),
+    new THREE.Vector3(0.75, 6.2, 0.0),
+    new THREE.Vector3(1.18, 9.1, -0.04),
+  ]);
+  const radialSegs = 8;
+  const tubularSegs = 12;
+  const frames = curve.computeFrenetFrames(tubularSegs, false);
+  const posArr: number[] = [];
+  const uvArr: number[] = [];
+  const idxArr: number[] = [];
+  for (let i = 0; i <= tubularSegs; i++) {
+    const t = i / tubularSegs;
+    const c = curve.getPointAt(t);
+    const N = frames.normals[i];
+    const B = frames.binormals[i];
+    const r = THREE.MathUtils.lerp(0.29, 0.125, t);
+    for (let j = 0; j <= radialSegs; j++) {
+      const th = (j / radialSegs) * Math.PI * 2;
+      const cosT = Math.cos(th);
+      const sinT = Math.sin(th);
+      const vx = c.x + r * (cosT * N.x + sinT * B.x);
+      const vy = c.y + r * (cosT * N.y + sinT * B.y);
+      const vz = c.z + r * (cosT * N.z + sinT * B.z);
+      posArr.push(vx, vy, vz);
+      uvArr.push(j / radialSegs, t * 4);
+    }
+  }
+  const stride = radialSegs + 1;
+  for (let i = 0; i < tubularSegs; i++) {
+    for (let j = 0; j < radialSegs; j++) {
+      const a = i * stride + j;
+      const b = a + stride;
+      const c = b + 1;
+      const d = a + 1;
+      idxArr.push(a, b, d, b, c, d);
+    }
+  }
+  const trunkGeo = new THREE.BufferGeometry();
+  trunkGeo.setAttribute("position", new THREE.Float32BufferAttribute(posArr, 3));
+  trunkGeo.setAttribute("uv", new THREE.Float32BufferAttribute(uvArr, 2));
+  trunkGeo.setIndex(idxArr);
+  trunkGeo.computeVertexNormals();
+
+  const crownX = 1.18;
+  const crownY = 9.05;
+  const frondGeos: THREE.BufferGeometry[] = [];
+  const frondCount = 10;
+  for (let f = 0; f < frondCount; f++) {
+    const az = (f / frondCount) * Math.PI * 2 + (f % 2) * 0.18;
+    const pitch = f % 2 === 0 ? 0.18 : -0.14;
+    const len = 3.2 + (f % 3) * 0.3;
+    const segLen = len / 4;
+    for (let s = 0; s < 4; s++) {
+      const w = (1 - s * 0.18) * 0.72;
+      const g = new THREE.BoxGeometry(w, 0.04, segLen * 1.06);
+      const droop = s * s * 0.14 - s * (0.14 + pitch);
+      g.rotateX(0.30 * s - pitch * 0.35);
+      g.translate(0, -droop, (s + 0.5) * segLen);
+      g.rotateY(az);
+      g.translate(crownX, crownY, -0.04);
+      frondGeos.push(g);
+    }
+  }
+
+  const frondGeo = decimateAndMergeBucket(frondGeos, 0.04, true)!;
+  for (const g of frondGeos) g.dispose();
+
+  const trunkMat = new THREE.MeshStandardMaterial({
+    color: 0x6b5340,
+    normalMap: assets.textures.concreteNor,
+    normalScale: new THREE.Vector2(0.85, 0.85),
+    roughness: 0.9,
+    metalness: 0.0,
+    envMapIntensity: 0.45,
+  });
+  const frondMat = new THREE.MeshStandardMaterial({
+    color: 0x2f6d31,
+    roughness: 0.68,
+    metalness: 0.02,
+    envMapIntensity: 0.65,
+  });
+
+  return {
+    parts: [
+      { geometry: trunkGeo, material: trunkMat },
+      { geometry: frondGeo, material: frondMat },
+    ],
   };
 }

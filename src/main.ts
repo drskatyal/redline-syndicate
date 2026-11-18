@@ -6,6 +6,8 @@ async function bootstrap() {
   if (window.location.search.includes("studio=1")) {
     const uiRoot = document.getElementById("uiRoot");
     if (uiRoot) uiRoot.style.display = "none";
+    const loadOverlay = document.getElementById("loadingOverlay");
+    if (loadOverlay) loadOverlay.style.display = "none";
     const { startAssetStudio } = await import("./studio/AssetStudio");
     await startAssetStudio(canvas);
     return;

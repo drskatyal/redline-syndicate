@@ -62,7 +62,7 @@
         </nav>
 
         <div class="hub-footer-links">
-          <span class="controls-mini">CONTROLS: <kbd>WASD</kbd>/<kbd>ARROWS</kbd> Ride &bull; <kbd>SHIFT</kbd> Nitro &bull; <kbd>SPACE</kbd>/<kbd>Q</kbd>/<kbd>E</kbd> Strike &bull; <kbd>C</kbd> Kick &bull; <kbd>F</kbd> EMP &bull; <kbd>TAB</kbd> Reflex</span>
+          <span class="controls-mini">CONTROLS: <kbd>WASD</kbd>/<kbd>ARROWS</kbd> Ride &bull; <kbd>SHIFT</kbd> N2O Boost &bull; <kbd>SPACE</kbd>/<kbd>Q</kbd>/<kbd>E</kbd> Strike &bull; <kbd>C</kbd> Kick &bull; <kbd>TAB</kbd> Reflex &bull; <kbd>V</kbd> Cam</span>
           <a class="retro-link" href="https://roadrash-web-production.up.railway.app" target="_blank" rel="noopener">1996 Retro Archive &rarr;</a>
         </div>
       </div>
@@ -149,32 +149,28 @@
       <div class="hud-bottom">
         <div class="hud-bottom-left">
           <div class="meter-row">
-            <span class="m-lbl">STAMINA</span>
+            <span class="m-lbl">RIDER</span>
             <div class="m-track"><div id="barStamina" class="m-fill green"></div></div>
           </div>
           <div class="meter-row">
-            <span class="m-lbl">CHASSIS</span>
+            <span class="m-lbl">BIKE</span>
             <div class="m-track"><div id="barArmor" class="m-fill gold"></div></div>
           </div>
           <div class="weapon-pill">
-            <span class="w-tag">WEAPON</span>
-            <span id="hudWeapon" class="w-name">CARBON KNUCKLE</span>
+            <span class="w-tag">GEAR</span>
+            <span id="hudWeapon" class="w-name">BRASS KNUCKLES</span>
           </div>
         </div>
 
         <div class="hud-bottom-right">
           <div class="tactical-bars">
             <div class="meter-row compact">
-              <span class="m-lbl cyan">NITRO [SHIFT]</span>
+              <span class="m-lbl cyan">N2O [SHIFT]</span>
               <div class="m-track"><div id="barNitro" class="m-fill cyan"></div></div>
             </div>
             <div class="meter-row compact">
-              <span class="m-lbl violet">REFLEX [TAB]</span>
+              <span class="m-lbl violet">FOCUS [TAB]</span>
               <div class="m-track"><div id="barFocus" class="m-fill violet"></div></div>
-            </div>
-            <div class="meter-row compact">
-              <span class="m-lbl amber">EMP [F]</span>
-              <div class="m-track"><div id="barEmp" class="m-fill amber"></div></div>
             </div>
           </div>
           <div class="speedo-box">
@@ -195,7 +191,6 @@
         <div class="touch-right">
           <div class="touch-combat-row">
             <button id="tFocus" class="t-btn sm violet">FOCUS</button>
-            <button id="tEmp" class="t-btn sm amber">EMP</button>
             <button id="tKick" class="t-btn sm">KICK</button>
             <button id="tStrike" class="t-btn sm red">HIT</button>
           </div>

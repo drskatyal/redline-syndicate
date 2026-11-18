@@ -4,6 +4,7 @@ import { loadAllGameAssets, LoadedAssets } from "../assets/AssetLoader";
 import { createMaterialKit, MaterialKit } from "../assets/MaterialLibrary";
 import {
   createArmoredRiderInstance,
+  createCoastalPalmTemplate,
   createPursuitHelicopterInstance,
   createSkyscraperTemplates,
   createSuperbikeInstance,
@@ -19,7 +20,7 @@ declare global {
     __ASSET_STUDIO__?: {
       ready: boolean;
       plateCount: number;
-      showPlate: (idx: number, hdrKey?: "sunset" | "sunrise" | "night") => Promise<Record<string, unknown>>;
+      showPlate: (idx: number, hdrKey?: "day" | "sunset" | "sunrise" | "night") => Promise<Record<string, unknown>>;
     };
   }
 }
@@ -108,30 +109,30 @@ export async function startAssetStudio(canvas: HTMLCanvasElement): Promise<void>
 
   let activeUpdater: ((t: number) => void) | null = null;
 
-  const setHdr = (key: "sunset" | "sunrise" | "night") => {
+  const setHdr = (key: "day" | "sunset" | "sunrise" | "night") => {
     const h = assets.hdr[key];
     scene.background = h.equirect;
     scene.backgroundBlurriness = 0.04;
     scene.environment = h.pmrem;
     scene.environmentIntensity = key === "night" ? 1.15 : 1.0;
-    sun.intensity = key === "night" ? 1.65 : key === "sunrise" ? 2.8 : 2.35;
-    sun.color.setHex(key === "night" ? 0x93c5fd : key === "sunrise" ? 0xffe4b5 : 0xffcfa3);
+    sun.intensity = key === "night" ? 1.65 : key === "day" ? 2.65 : key === "sunrise" ? 2.8 : 2.35;
+    sun.color.setHex(key === "night" ? 0x93c5fd : key === "day" ? 0xfff5e4 : key === "sunrise" ? 0xffe4b5 : 0xffcfa3);
   };
 
-  setHdr("sunset");
+  setHdr("day");
 
-  const buildPlate = (idx: number, hdrKey?: "sunset" | "sunrise" | "night"): Record<string, unknown> => {
+  const buildPlate = (idx: number, hdrKey?: "day" | "sunset" | "sunrise" | "night"): Record<string, unknown> => {
     clearStage();
     activeUpdater = null;
     if (hdrKey) setHdr(hdrKey);
-    else setHdr(idx === 4 ? "night" : idx === 3 ? "sunrise" : "sunset");
+    else setHdr(idx === 4 ? "night" : idx === 3 ? "day" : idx === 0 ? "day" : "sunset");
 
     const info: Record<string, unknown> = { plate: idx };
 
     if (idx === 0) {
-      // Plate 0: Superbike + Armored MotoGP Rider (Front 3/4 + Rear Chase + Wheel Spin + Weapon Strike)
+      // Plate 0: Superbike + Human Street Rider (Front 3/4 + Rear Chase + Wheel Spin + Alloy Bat Strike)
       const leftBike: SuperbikeVisual = createSuperbikeInstance(assets, kit, BIKES[0], 0xe11d48, 0xf59e0b);
-      const leftRider = createArmoredRiderInstance(assets, 0x161b26, 0x00f0ff, "katana");
+      const leftRider = createArmoredRiderInstance(assets, 0x161b26, 0x1f2937, "katana");
       leftBike.chassisPivot.add(leftRider.root);
       leftBike.root.position.set(-1.35, 0, 0);
       leftBike.root.rotation.y = 0.52;
@@ -139,8 +140,8 @@ export async function startAssetStudio(canvas: HTMLCanvasElement): Promise<void>
       leftBike.setEffects(42, 0.035, true, false);
       stageGroup.add(leftBike.root);
 
-      const rightBike: SuperbikeVisual = createSuperbikeInstance(assets, kit, BIKES[2], 0x0284c7, 0xff2a85);
-      const rightRider = createArmoredRiderInstance(assets, 0x1f2937, 0xff2a85, "katana");
+      const rightBike: SuperbikeVisual = createSuperbikeInstance(assets, kit, BIKES[2], 0x0284c7, 0xf59e0b);
+      const rightRider = createArmoredRiderInstance(assets, 0x7f1d1d, 0xf59e0b, "katana");
       rightBike.chassisPivot.add(rightRider.root);
       rightBike.root.position.set(1.35, 0, -0.4);
       rightBike.root.rotation.y = Math.PI + 0.35; // Rear 3/4 chase inspection!
@@ -153,8 +154,8 @@ export async function startAssetStudio(canvas: HTMLCanvasElement): Promise<void>
       info.bikeBoundsY = [Number(bL.min.y.toFixed(3)), Number(bL.max.y.toFixed(3))];
       info.bikeLengthZ = Number(bL.getSize(new THREE.Vector3()).z.toFixed(3));
       camera.position.set(0.0, 1.55, 4.35);
-      camera.lookAt(0.0, 0.78, -0.1);
-      label.textContent = `PLATE 1: Superbike + Armored Rider (Front 3/4 & Rear Chase + Katana Strike) | minY=${info.bikeBoundsY}`;
+      camera.lookAt(0.0, 0.84, -0.1);
+      label.textContent = `PLATE 1: Superbike + Human Street Rider (Front 3/4 & Rear Chase + Bat Strike) | minY=${info.bikeBoundsY}`;
     } else if (idx === 1) {
       // Plate 1: Police Ferrari Interceptor + Exotic Supercars
       const cop: TrafficVisual = createTrafficVehicleInstance(assets, kit, "police", 0);
@@ -202,6 +203,7 @@ export async function startAssetStudio(canvas: HTMLCanvasElement): Promise<void>
       const barrierTpl = extractPropTemplate(assets.models.roadBarrier, 0.95, true);
       const lampTpl = extractPropTemplate(assets.models.streetLamp, 6.8, false);
       const treeTpl = extractPropTemplate(assets.models.tree, 6.4, false);
+      const palmTpl = createCoastalPalmTemplate(assets);
       const shrubTpl = extractPropTemplate(assets.models.shrub, 1.4, false);
       const boulderTpl = extractPropTemplate(assets.models.boulder, 2.2, false);
 
@@ -221,7 +223,8 @@ export async function startAssetStudio(canvas: HTMLCanvasElement): Promise<void>
       addTpl(barrierTpl.parts, -5.2, 0, 0, 0);
       addTpl(barrierTpl.parts, -5.2, 0, 3.1, 0);
       addTpl(lampTpl.parts, -3.2, 0, -1.5, Math.PI * 0.5);
-      addTpl(treeTpl.parts, 2.4, 0, -1.0, 0.4);
+      addTpl(palmTpl.parts, 2.6, 0, -1.2, 0.2);
+      addTpl(treeTpl.parts, -0.4, 0, -2.5, 0.4);
       addTpl(shrubTpl.parts, 0.8, 0, 1.6, 0);
       addTpl(boulderTpl.parts, 4.8, 0, -2.5, 0.8);
 
@@ -281,7 +284,7 @@ export async function startAssetStudio(canvas: HTMLCanvasElement): Promise<void>
   window.__ASSET_STUDIO__ = {
     ready: true,
     plateCount: 5,
-    showPlate: async (idx: number, hdrKey?: "sunset" | "sunrise" | "night") => {
+    showPlate: async (idx: number, hdrKey?: "day" | "sunset" | "sunrise" | "night") => {
       const res = buildPlate(idx, hdrKey);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
       return res;

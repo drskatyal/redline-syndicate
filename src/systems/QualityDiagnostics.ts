@@ -8,6 +8,8 @@ export interface GameDiagnosticsSnapshot {
   stageId: string;
   speedMph: number;
   distanceMeters: number;
+  laneOffset: number;
+  playerScreenXPct: number;
   rank: number;
   wantedHeat: number;
   stamina: number;
@@ -31,7 +33,7 @@ declare global {
       openDistricts: () => void;
       setQuality: (q: "ultra" | "high" | "perf") => void;
       setBotInput: (intent: Record<string, unknown> | null) => void;
-      triggerEmp: () => void;
+      setPlayerTrackS: (s: number, laneOffset?: number, speedMph?: number) => void;
       triggerHeliView: () => void;
       addCash: (amount: number) => void;
       setCameraMode?: (mode: number) => void;

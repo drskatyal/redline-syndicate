@@ -43,7 +43,6 @@ export class HudController {
   private barArmor = document.getElementById("barArmor")!;
   private barNitro = document.getElementById("barNitro")!;
   private barFocus = document.getElementById("barFocus")!;
-  private barEmp = document.getElementById("barEmp")!;
   private hudWeapon = document.getElementById("hudWeapon")!;
   private hudGear = document.getElementById("hudGear")!;
   private hudSpeed = document.getElementById("hudSpeed")!;
@@ -179,7 +178,6 @@ export class HudController {
     this.engine.input.bindTouchButton(document.getElementById("tFocus"), "bulletTime", unlock);
     this.engine.input.bindTouchButton(document.getElementById("tStrike"), "strike", unlock);
     this.engine.input.bindTouchButton(document.getElementById("tKick"), "kick", unlock);
-    this.engine.input.bindTouchButton(document.getElementById("tEmp"), "emp", unlock);
   }
 
   public render(snap: UiSnapshot): void {
@@ -237,7 +235,6 @@ export class HudController {
       this.barArmor.style.width = `${Math.round(snap.armorNorm * 100)}%`;
       this.barNitro.style.width = `${Math.round(snap.nitroNorm * 100)}%`;
       this.barFocus.style.width = `${Math.round(snap.focusNorm * 100)}%`;
-      this.barEmp.style.width = `${Math.round(snap.empNorm * 100)}%`;
       this.hudWeapon.textContent = WEAPONS[snap.weapon].name.toUpperCase();
 
       this.hudGear.textContent = `G${snap.gear}`;

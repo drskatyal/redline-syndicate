@@ -145,10 +145,10 @@ async function main() {
     if (!ready) throw new Error("AssetStudio timed out waiting for assets to load");
 
     const plates = [
-      { idx: 0, file: "01_bike_and_rider.png", hdr: "sunset" },
-      { idx: 1, file: "02_police_and_exotics.png", hdr: "sunset" },
+      { idx: 0, file: "01_bike_and_rider.png", hdr: "day" },
+      { idx: 1, file: "02_police_and_exotics.png", hdr: "day" },
       { idx: 2, file: "03_heavy_truck_and_chopper.png", hdr: "sunrise" },
-      { idx: 3, file: "04_pbr_highway_props.png", hdr: "sunrise" },
+      { idx: 3, file: "04_pbr_highway_props.png", hdr: "day" },
       { idx: 4, file: "05_photoreal_skyscrapers.png", hdr: "night" },
     ];
 

@@ -48,9 +48,6 @@ export class VfxSystem {
   private billboards: BillboardParticle[] = [];
   private bbCursor = 0;
 
-  private empMesh: THREE.Mesh;
-  private empTimer = 0;
-
   private rainOffsets: Float32Array;
   private dummy = new THREE.Object3D();
   private tmpColor = new THREE.Color();
@@ -150,10 +147,6 @@ export class VfxSystem {
       this.rainOffsets[i * 3 + 1] = Math.random() * 14 + 0.4;
       this.rainOffsets[i * 3 + 2] = Math.random() * 60 - 8;
     }
-
-    this.empMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), kit.empWaveMat);
-    this.empMesh.visible = false;
-    this.group.add(this.empMesh);
   }
 
   public spawnBurst(x: number, y: number, z: number, colorHex: number, count = 18, speed = 10, scale = 1): void {
@@ -212,14 +205,6 @@ export class VfxSystem {
       b.startScale = 1.2 * scale;
       b.endScale = 4.2 * scale;
     }
-  }
-
-  public triggerEmp(x: number, y: number, z: number): void {
-    this.empMesh.position.set(x, y + 0.8, z);
-    this.empMesh.scale.setScalar(0.5);
-    this.empMesh.visible = true;
-    this.empTimer = 0.65;
-    this.spawnBurst(x, y + 0.8, z, 0x00f0ff, 36, 18, 1.5);
   }
 
   public update(dt: number, camX: number, camY: number, camZ: number, speedMps: number, hasRain: boolean): void {
@@ -290,15 +275,7 @@ export class VfxSystem {
     this.fireInst.instanceMatrix.needsUpdate = true;
     if (this.fireInst.instanceColor) this.fireInst.instanceColor.needsUpdate = true;
 
-    if (this.empTimer > 0) {
-      this.empTimer -= dt;
-      const progress = 1 - Math.max(0, this.empTimer) / 0.65;
-      this.empMesh.scale.setScalar(1 + progress * 20);
-      (this.empMesh.material as THREE.MeshBasicMaterial).opacity = (1 - progress) * 0.62;
-      if (this.empTimer <= 0) this.empMesh.visible = false;
-    }
-
-    const showStreaks = hasRain || speedMps > 54;
+    const showStreaks = hasRain;
     this.rainInst.visible = showStreaks;
     this.rainInst.count = showStreaks ? RAIN_COUNT : 0;
     if (showStreaks) {

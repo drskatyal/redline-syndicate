@@ -23,9 +23,9 @@ export const BOSS_BIOS: Record<
 > = {
   vance: {
     name: "MARCUS VANCE",
-    title: "VICE BAY SYNDICATE KINGPIN",
+    title: "PACIFIC COAST STREET KINGPIN",
     portraitUrl: "./art/char-vance.jpg",
-    quote: "Own the wet asphalt or get swallowed by my rear tire.",
+    quote: "Own the coast highway or eat my exhaust.",
   },
   kira: {
     name: "KIRA SATO",
@@ -41,9 +41,9 @@ export const BOSS_BIOS: Record<
   },
   cross: {
     name: "CMDR. HELENA CROSS",
-    title: "APEX TACTICAL INTERCEPT DIVISION",
+    title: "HIGHWAY PATROL INTERCEPT DIVISION",
     portraitUrl: "./art/char-cross.jpg",
-    quote: "All units converge. Put this syndicate runner in handcuffs.",
+    quote: "All patrol units converge. Pull this street racer over now.",
   },
 };
 

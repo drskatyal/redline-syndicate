@@ -182,60 +182,87 @@ async function main() {
     await sleep(800);
     await snap("02_hangar.png");
 
-    // Stage 1: Vice Bay Rain Highway
+    // Stage 1: Pacific Coast Beach Highway (Daytime Coastal + Palm Trees + Ocean)
     await cdp.send("Runtime.evaluate", {
       expression:
-        "window.__GAME_DEBUG__.setCameraMode(0); window.__GAME_DEBUG__.startRace('vice', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.12 });",
+        "window.__GAME_DEBUG__.setCameraMode(0); window.__GAME_DEBUG__.startRace('vice', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.04 });",
     });
-    await sleep(3200);
+    await sleep(3000);
     const viceDiag = await diag();
-    console.log("03 Vice Bay diag:", viceDiag);
-    await snap("03_race_vice.png");
+    console.log("03 Coastal Beach diag:", viceDiag);
+    await snap("03_beach_chase.png");
 
-    if (!viceDiag || viceDiag.speedMph < 90 || viceDiag.distanceMeters < 40) {
-      throw new Error(`Insufficient race progress/speed in Vice Bay: ${JSON.stringify(viceDiag)}`);
+    if (!viceDiag || viceDiag.speedMph < 85 || viceDiag.distanceMeters < 40) {
+      throw new Error(`Insufficient race progress/speed in Coastal Beach Hwy: ${JSON.stringify(viceDiag)}`);
     }
 
-    // Combat + Police Ferrari Interceptor Pursuit
+    // Steering Sign Assertion 1: Press RIGHT (+1) -> must move to Screen Right (laneOffset > +2.2 && playerScreenXPct > 51.5)
     await cdp.send("Runtime.evaluate", {
       expression:
-        "window.__GAME_DEBUG__.triggerHeliView(); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0, strikeRightPressed: true });",
+        "window.__GAME_DEBUG__.setPlayerTrackS(20, 0, 110); window.__GAME_DEBUG__.setBotInput({ throttle: true, steer: 1 });",
     });
-    await sleep(950);
-    const pursuitDiag = await diag();
-    console.log("04 Pursuit & Combat diag:", pursuitDiag);
-    await snap("04_race_combat_pursuit.png");
+    await sleep(600);
+    const rightDiag = await diag();
+    console.log("04 Steer RIGHT diag:", rightDiag);
+    await snap("04_steer_right.png");
+    if (!rightDiag || rightDiag.laneOffset <= 2.2 || rightDiag.playerScreenXPct <= 51.5) {
+      throw new Error(`RIGHT steer assertion failed! Got: ${JSON.stringify(rightDiag)}`);
+    }
 
-    // Stage 3: Dubai Al-Mirage Sunset Desert Autobahn
+    // Steering Sign Assertion 2: Press LEFT (-1) -> must move to Screen Left (laneOffset < -2.2 && playerScreenXPct < 48.5)
     await cdp.send("Runtime.evaluate", {
       expression:
-        "window.__GAME_DEBUG__.startRace('dubai', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.05 });",
+        "window.__GAME_DEBUG__.setPlayerTrackS(20, 0, 110); window.__GAME_DEBUG__.setBotInput({ throttle: true, steer: -1 });",
     });
-    await sleep(2200);
-    const dubaiDiag = await diag();
-    console.log("05 Dubai Sunset diag:", dubaiDiag);
-    await snap("05_race_dubai.png");
+    await sleep(600);
+    const leftDiag = await diag();
+    console.log("05 Steer LEFT diag:", leftDiag);
+    await snap("05_steer_left.png");
+    if (!leftDiag || leftDiag.laneOffset >= -2.2 || leftDiag.playerScreenXPct >= 48.5) {
+      throw new Error(`LEFT steer assertion failed! Got: ${JSON.stringify(leftDiag)}`);
+    }
 
-    // Stage 5: San Verona Night Lockdown + Bell Huey + EMP
+    // Centrifugal Curve Drift Assertion (Non-Bot Physics): holding throttle through peak curve apex s=290..360 must drift outward > 0.35m
+    await cdp.send("Runtime.evaluate", {
+      expression:
+        "window.__GAME_DEBUG__.setPlayerTrackS(290, 0, 145); window.__GAME_DEBUG__.setBotInput({ throttle: true, steer: 0 });",
+    });
+    await sleep(1100);
+    const driftDiag = await diag();
+    console.log("05b Curve centrifugal drift diag:", driftDiag);
+    if (!driftDiag || Math.abs(driftDiag.laneOffset) < 0.35) {
+      throw new Error(`Centrifugal curve drift assertion failed (felt like bot on rails): ${JSON.stringify(driftDiag)}`);
+    }
+
+    // Stage 2: Bayfront Metro Expressway (Daytime City Skyscrapers + Melee Strike)
+    await cdp.send("Runtime.evaluate", {
+      expression:
+        "window.__GAME_DEBUG__.startRace('kowloon', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.06, strikeRightPressed: true });",
+    });
+    await sleep(2000);
+    const cityDiag = await diag();
+    console.log("06 City Metro diag:", cityDiag);
+    await snap("06_city_metro.png");
+
+    // Stage 5: Harbor Night Freeway + Police Helicopter & Patrol Pursuit + Rider POV
     await cdp.send("Runtime.evaluate", {
       expression:
         "window.__GAME_DEBUG__.startRace('sanverona', true); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0 }); window.__GAME_DEBUG__.triggerHeliView();",
     });
     await sleep(2000);
-    await cdp.send("Runtime.evaluate", { expression: "window.__GAME_DEBUG__.triggerEmp()" });
-    await sleep(180);
     const sanDiag = await diag();
-    console.log("06 San Verona diag:", sanDiag);
-    await snap("06_race_sanverona.png");
+    console.log("07 Night Pursuit diag:", sanDiag);
+    await snap("07_night_pursuit.png");
 
-    // Helmet Visor POV (Camera Mode 2)
+    // Rider Handlebar POV (Camera Mode 2)
     await cdp.send("Runtime.evaluate", {
-      expression: "window.__GAME_DEBUG__.setCameraMode(2); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.1 });",
+      expression: "window.__GAME_DEBUG__.setCameraMode(2); window.__GAME_DEBUG__.setBotInput({ throttle: true, nitro: true, steer: 0.08 });",
     });
     await sleep(900);
+    await cdp.send("Runtime.evaluate", { expression: "window.__GAME_DEBUG__.setBotInput(null);" });
     const povDiag = await diag();
-    console.log("07 POV diag:", povDiag);
-    await snap("07_race_pov.png");
+    console.log("08 Rider POV diag:", povDiag);
+    await snap("08_rider_pov.png");
 
     console.log("\n=== ERRORS ===");
     console.log(errors.length ? errors.join("\n") : "(none)");

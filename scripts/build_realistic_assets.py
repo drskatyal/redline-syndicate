@@ -16,10 +16,12 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODELS_DIR = os.path.join(ROOT, "public", "models")
 PBR_DIR = os.path.join(ROOT, "public", "pbr")
+HDR_DIR = os.path.join(ROOT, "public", "hdr")
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) RedlineAssetBuilder/1.0"}
 
 LOWPOLY_FILES = [
+    "soldier.glb",
     "police-car.glb",
     "sports-car.glb",
     "pickup-truck.glb",
@@ -71,10 +73,10 @@ def purge_lowpoly() -> None:
 
 
 def fetch_github_models() -> None:
-    print("[2/4] Downloading rigged PBR rider, contact AO, and freight transport GLB...")
+    print("[2/4] Downloading rigged PBR human rider, contact AO, and freight transport GLB...")
     download_file(
-        "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/Soldier.glb",
-        os.path.join(MODELS_DIR, "soldier.glb"),
+        "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/readyplayer.me.glb",
+        os.path.join(MODELS_DIR, "human-rider.glb"),
     )
     download_file(
         "https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/gltf/ferrari_ao.png",
@@ -87,17 +89,22 @@ def fetch_github_models() -> None:
 
 
 def fetch_polyhaven_textures() -> None:
-    print("[3/4] Downloading Poly Haven CC0 scanned 1k PBR surface textures...")
+    print("[3/4] Downloading Poly Haven CC0 scanned 1k PBR surface textures & daytime coastal HDR...")
     os.makedirs(PBR_DIR, exist_ok=True)
+    os.makedirs(HDR_DIR, exist_ok=True)
     specs = [
         ("asphalt_02", "asphalt"),
         ("brushed_concrete", "concrete"),
+        ("coast_sand_01", "sand"),
     ]
     for asset_id, prefix in specs:
         meta = fetch_json(f"https://api.polyhaven.com/files/{asset_id}")
         download_file(meta["Diffuse"]["1k"]["jpg"]["url"], os.path.join(PBR_DIR, f"{prefix}_diff.jpg"))
         download_file(meta["nor_gl"]["1k"]["jpg"]["url"], os.path.join(PBR_DIR, f"{prefix}_nor.jpg"))
         download_file(meta["Rough"]["1k"]["jpg"]["url"], os.path.join(PBR_DIR, f"{prefix}_rough.jpg"))
+
+    day_hdr_meta = fetch_json("https://api.polyhaven.com/files/kloofendal_48d_partly_cloudy_puresky")
+    download_file(day_hdr_meta["hdri"]["1k"]["hdr"]["url"], os.path.join(HDR_DIR, "day.hdr"))
 
 
 def fetch_polyhaven_gltf(asset_id: str, subdir: str) -> None:

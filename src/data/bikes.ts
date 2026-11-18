@@ -105,7 +105,7 @@ export const BIKES: BikeSpec[] = [
     primaryHex: 0x1e293b,
     secondaryHex: 0x05070c,
     accentHex: 0x00f0ff,
-    tagline: "Experimental magnetic-drive prototype pushing 265+ MPH with extended EMP capacitor reserves.",
+    tagline: "Supercharged 1000cc inline-four built for 260 MPH coastal freeway runs.",
   },
 ];
 
@@ -119,10 +119,10 @@ export interface UpgradeDef {
 }
 
 export const UPGRADES: UpgradeDef[] = [
-  { key: "turbine", label: "Stage-X ECU & Bore", desc: "+7% top speed & launch thrust per tier", costs: [1100, 2600, 5200, 9200] },
-  { key: "grip", label: "Active Carbon Aero", desc: "+9% lean angle speed & wet-puddle grip per tier", costs: [950, 2200, 4400, 7800] },
-  { key: "chassis", label: "Ballistic Fairing Plate", desc: "+16 armor & heavier ramming stability per tier", costs: [1000, 2400, 4700, 8200] },
-  { key: "capacitor", label: "Pulse Nitro & EMP Core", desc: "+22% Nitro/Focus/EMP capacity & faster recharge", costs: [1200, 2800, 5600, 9600] },
+  { key: "turbine", label: "ECU Tune & Titanium Exhaust", desc: "+7% top speed & mid-range pull per stage", costs: [1100, 2600, 5200, 9200] },
+  { key: "grip", label: "Pirelli Diablo Sport Tires", desc: "+9% lean grip & wet pavement traction per stage", costs: [950, 2200, 4400, 7800] },
+  { key: "chassis", label: "Reinforced Frame Sliders", desc: "+16 crash durability & side-swipe stability per stage", costs: [1000, 2400, 4700, 8200] },
+  { key: "capacitor", label: "Dual-Stage N2O Bottle", desc: "+22% Nitro & Reflex capacity + faster refill", costs: [1200, 2800, 5600, 9600] },
 ];
 
 export const PAINT_SWATCHES = [
